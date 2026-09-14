@@ -26,3 +26,8 @@ the walking skeleton needs it.
 Zero configuration, file-based, ships with Python. Sufficient for CP1 and
 for the expected load of a single car park. Revisit if the *Unknown* in the
 Project Frame turns out badly.
+
+### D3 – Times stored as UTC ISO-8601 strings
+SQLite has no datetime type. The C01 spike (`docs/evidence-and-evolution.md`)
+showed that `isoformat()` / `fromisoformat()` round-trips timezone-aware
+datetimes losslessly, so no custom adapters are used.
