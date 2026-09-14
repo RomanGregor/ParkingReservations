@@ -19,6 +19,14 @@ download, and a clean checkout runs with a single command. See
 
 ## Run
 
+GUI (tkinter, creates `parking.db` in the current directory):
+
+```
+python3 run.py            # or: python3 run.py path/to/other.db
+```
+
+Tests:
+
 ```
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
@@ -31,7 +39,8 @@ docs/
   intent-and-change.md          # Project Frame + future pressure
   architecture-and-decisions.md # stack + decisions
   evidence-and-evolution.md     # spike evidence
-src/parking/                    # domain model + persistence
+run.py                          # launches the GUI
+src/parking/                    # domain model, persistence, tkinter GUI
 tests/                          # unit tests (spike evidence lives here)
 ```
 
