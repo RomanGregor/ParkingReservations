@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.db
+LMS.html
+LMS_files/
