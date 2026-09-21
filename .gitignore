@@ -1,5 +1,23 @@
+# Python
 __pycache__/
 *.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# Local database created by run.py, incl. SQLite side files
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Course materials saved from LMS (not part of the project)
 LMS.html
 LMS_files/
+swi2.html
+swi2_files/
+
+# Editors / local tool settings
+.vscode/
+.idea/
+.claude/settings.local.json
