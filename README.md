@@ -7,6 +7,7 @@ Reservation system for **parking places**. Course project for SWI (460-4163), te
 - RomanGregor
 - Ondra-lab
 - Kirisok
+- olehkulcyckyj
 
 Repository: https://github.com/RomanGregor/ParkingReservations
 
