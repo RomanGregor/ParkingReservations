@@ -557,3 +557,54 @@ Provedena před změnou kódu.
 | testy souběhu (`test_concurrency.py`) | volají `repo.apply` | volají `ReservationService` (zpoždění mezi kontrolou a zápisem přes pomalý repozitář) | CHANGE |
 | pravidlo závislostí ADR-04 | neověřeno; GUI dnes importuje repozitář i přechodová pravidla | GUI závisí jen na službě, `state` zapisuje jen `domain.py` | VERIFY (L2) |
 | doména bez I/O | pravděpodobně platí | `domain.py` neimportuje `sqlite3`, `tkinter` ani jiné moduly `parking` | VERIFY (L2) |
+
+## K. Úprava implementace
+
+Provedeny všechny řádky CHANGE z J (commit `1ab853e`):
+- nový `service.py` (`ReservationService`, `open_service`), `places.py`
+  (`PlaceCatalog`) a `notification.py` (`Notifier`, `LogNotifier`);
+- `repository.py`: `apply(id, callback)` nahrazeno `transaction()`, přibylo
+  `all()`;
+- `gui.py` volá jen `ReservationService`. Kontrolu vypršení spouští při
+  obnovení a každou minutu (`EXPIRY_CHECK_MS`);
+- `run.py` zapne logování, kam píše `LogNotifier`;
+- `tests/test_concurrency.py` jde přes službu a přibyl test souběžného
+  Approve (REQ-06). Nový `tests/test_service.py`.
+
+Chyby nalezené při review změny a opravené před commitem: časovač vypršení
+by se po výjimce v `refresh()` přestal plánovat (teď se plánuje před
+obnovou).
+
+## L1. Ověření chování
+
+Spuštěno `PYTHONPATH=src python3 -m unittest discover -s tests -v`:
+40 testů, OK.
+
+| Ověření | Výsledek | Doklad |
+|---|---|---|
+| úspěšná cesta: Confirm na `VIP-01` → `PENDING_APPROVAL`, nová instance později Approve → `CONFIRMED`, Driver dostane 2 notifikace | OK | `test_service.test_confirm_on_approval_place_waits_and_later_approve_confirms`; v běžícím GUI řízeném skriptem přes jeho tlačítka (DRAFT → PENDING_APPROVAL → CONFIRMED, notifikace v logu) |
+| alternativa: Approve s kolizí → `RuleViolation`, rollback, zůstává `PENDING_APPROVAL`, bez notifikace | OK | `test_service.test_approve_with_conflict_is_rolled_back_and_not_notified` |
+| failure: Notification Service selže → `CONFIRMED` zůstává, chyba zalogována | OK | `test_service.test_failing_notification_does_not_undo_the_approval` |
+| REQ-08: `expire_due` vyprší jen nerozhodnuté žádosti po `start` | OK | `test_service.test_expire_due_expires_only_undecided_requests_after_start` |
+| hranice `start` podle hodin služby | OK | `test_service.test_service_clock_decides_the_start_boundary` |
+| souběh: dvě konfliktní Approve ve dvou spojeních (REQ-06), dvě Confirm (REQ-04), Cancel × Confirm | OK, právě jedna `CONFIRMED`; Cancel vyhraje | `test_concurrency` (4 testy) |
+| testy souběhu opravdu chytají chybu | po odstranění `BEGIN IMMEDIATE` z `transaction()` selžou 3 ze 4 | mutace, ručně, vráceno |
+| příklady ověření z C02 (OP-01..OP-05) | OK, beze změny | `test_domain` (27) + `test_persistence_spike` (2) |
+
+## L2. Architektonické pravidlo
+
+**Architektonické pravidlo:** Stav lifecycle `Reservation` mění jen
+Reservation Management (ADR-04, G2, G3). Konkrétně: `.state` se přiřazuje
+jen v `domain.py`, přechodová pravidla z `domain.py` volá jen `service.py`,
+`gui.py` neimportuje `parking.repository` ani `sqlite3` a `domain.py`
+nezávisí na I/O ani na jiných modulech `parking`.
+
+**Kontrola:** `tests/test_architecture.py` projde AST všech
+`src/parking/*.py`. Běží s ostatními testy (`unittest discover`).
+
+**Výsledek:**
+- TO-BE (commit `3af6de7`): OK, žádné porušení;
+- stejná kontrola nad AS-IS kódem `bb72a77` hlásí 7 porušení (`gui.py`
+  importuje 6 přechodových pravidel a `parking.repository`). Pravidlo tedy
+  dřív neplatilo a řádek VERIFY z J by bez změny neprošel;
+- mutace (přiřazení `r.state` v `gui.py`) test shodí.
