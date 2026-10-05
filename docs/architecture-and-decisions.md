@@ -279,3 +279,108 @@ jedno definované místo mimo transakci.
 - bude vyžadováno doručení notifikace nebo vypršení i bez běžícího klienta.
   Pak samostatný worker a outbox tabulka (nový runtime prvek);
 - se ukáže, že služba drží logiku, která patří do domény.
+
+## G1. Kontext systému
+
+```mermaid
+flowchart LR
+    D([Driver])
+    FM([Facility manager])
+    RS[Reservation System]
+    NS[[Notification Service]]
+    D -- "create, check availability,<br/>confirm, cancel" --> RS
+    FM -- "approve, reject, cancel" --> RS
+    RS -- "stav rezervací, chyba pravidla" --> D
+    RS -- "seznam žádostí ke schválení" --> FM
+    RS -- "notifikace o výsledku rezervace<br/>(potvrzeno, zrušeno, zamítnuto, vypršelo)" --> NS
+```
+
+Vypršení (REQ-08) nemá aktéra, způsobuje ho plynutí času. Proto v kontextu
+není. Přihlašování (IdP) projekt zatím nemá (Část A F6).
+
+## G2. TO-BE statická architektura
+
+```mermaid
+flowchart TB
+    subgraph RSYS["Reservation System"]
+        UI["<b>Reservation UI</b><br/>gui.py<br/>role: vstup a zobrazení, spouští kontrolu vypršení<br/>owns: nic"]
+        RM["<b>Reservation Management</b><br/>service.py + domain.py<br/>role: přechody stavu, BR-02, hranice transakce<br/>owns: Reservation lifecycle, hodiny (now)"]
+        PC["<b>Place Catalog</b><br/>places.py<br/>role: místa a jejich vlastnosti<br/>owns: seznam míst, requires_approval"]
+        ST["<b>Reservation Store</b><br/>repository.py<br/>role: uložení a načtení rezervací<br/>owns: uložená data, zámek pro zápis"]
+        NI["<b>Notification Integration</b><br/>notification.py<br/>role: oznámit výsledek přechodu<br/>owns: rozhraní Notifier, zpracování selhání"]
+    end
+    NS[[Notification Service]]
+
+    UI -- "create, check, confirm, approve,<br/>reject, cancel, expire_due,<br/>places, reservations" --> RM
+    RM -- "find(place_id)" --> PC
+    RM -- "transaction(), get, for_place, save" --> ST
+    RM -- "reservation_changed(r)<br/>až po commitu" --> NI
+    NI -- "notification request" --> NS
+```
+
+**Přidělení odpovědností z C2 (každá má jednoho hlavního vlastníka):**
+
+| Odpovědnost | Vlastník |
+|---|---|
+| R1 rozhodnout o přechodu lifecycle | Reservation Management (pravidla v `domain.py`) |
+| R2 BR-02 při souběhu, hranice transakce | Reservation Management (určuje hranici). Reservation Store dává jen mechanismus `transaction()` |
+| R3 čekající žádost o schválení | Reservation Management |
+| R4 spustit kontrolu vypršení | Reservation UI (časovač a obnovení). Jen spouští, nerozhoduje |
+| R5 katalog míst | Place Catalog |
+| R6 uložení rezervací | Reservation Store |
+| R7 notifikace | Notification Integration |
+| R8 vstup a zobrazení | Reservation UI |
+
+**Povolené závislosti** jsou jen ty nakreslené. Zakázané, protože by
+obcházely ADR-04:
+- Reservation UI → Reservation Store;
+- Reservation UI → přechodová pravidla v `domain.py` (`confirm`, `approve`,
+  `reject`, `cancel`, `expire_if_due`);
+- kdokoli kromě `domain.py` → zápis `Reservation.state`.
+
+**Kde je vidět ADR-04:** UI má jedinou šipku, a to do Reservation
+Management. Transakci i notifikaci (po commitu) volá jen Reservation
+Management.
+
+## G3. Vlastnictví přechodů ve statechartu v0.2
+
+Rozhodovat znamená ověřit podmínky a přechod provést. Vyžádat znamená jen
+zavolat operaci Reservation Management.
+
+| Přechod | Owner rozhodnutí (prvek G2) | Kdo může přechod pouze vyžádat |
+|---|---|---|
+| `[*] → DRAFT` (create) | Reservation Management | Driver přes Reservation UI |
+| `DRAFT → CONFIRMED` | Reservation Management (BR-02 v transakci, místo bez schválení podle Place Catalog) | Driver přes Reservation UI |
+| `DRAFT → PENDING_APPROVAL` | Reservation Management (`requires_approval` z Place Catalog) | Driver přes Reservation UI |
+| `PENDING_APPROVAL → CONFIRMED` | Reservation Management (BR-02 v transakci) | Facility manager přes Reservation UI |
+| `PENDING_APPROVAL → REJECTED` | Reservation Management | Facility manager přes Reservation UI |
+| `PENDING_APPROVAL → EXPIRED` | Reservation Management (`now` z vlastních hodin) | Reservation UI (časovač / obnovení, bez aktéra) |
+| `DRAFT / PENDING_APPROVAL / CONFIRMED → CANCELLED` | Reservation Management | Driver nebo Facility manager přes Reservation UI |
+
+Kdo je Driver a kdo Facility manager, systém zatím neověřuje (F6).
+Vyžadující strana je dána specifikací, ne kódem.
+
+## G4. Runtime / deployment
+
+```mermaid
+flowchart LR
+    subgraph HOST["Počítač uživatele"]
+        subgraph P1["Proces: python3 run.py (instance 1)"]
+            P1C["Reservation UI<br/>Reservation Management<br/>Place Catalog<br/>Reservation Store<br/>Notification Integration"]
+        end
+        subgraph P2["Proces: python3 run.py (instance 2, stejné složení)"]
+            P2C["…"]
+        end
+        DB[("parking.db<br/>SQLite soubor")]
+    end
+    NS[["Notification Service<br/>(externí; v CP1 stub zapisující do logu)"]]
+    P1C -- "SQL, BEGIN IMMEDIATE" --> DB
+    P2C -- "SQL, BEGIN IMMEDIATE" --> DB
+    P1C -. "notification request" .-> NS
+    P2C -. "notification request" .-> NS
+```
+
+Jeden deployable (Python aplikace) může běžet ve více instancích nad
+jedním souborem SQLite. Souběh mezi instancemi řeší zámek SQLite pro zápis
+uvnitř transakce Reservation Management. HTTP API z CP1 bude další proces
+se stejnými prvky kromě Reservation UI. ADR-04 se tím nemění.
