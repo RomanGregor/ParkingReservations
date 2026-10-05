@@ -513,3 +513,40 @@ mají v H2 třídu. `domain.confirm` a `domain.approve` patří modulu
 `ReservationService` a `ReservationRules` dohromady tvoří Reservation
 Management, `PlaceCatalog` je Place Catalog, `ReservationRepository` je
 Reservation Store a `Notifier` s `LogNotifier` jsou Notification Integration.
+
+## I. Cross-view kontrola
+
+Provedena před změnou kódu.
+
+| Kontrola | Otázka | Výsledek |
+|---|---|---|
+| C02 ↔ G2 | Umí architektura realizovat požadované chování a pravidla? | Ano. REQ-01..REQ-07 provádí Reservation Management v transakci (REQ-04, REQ-06). REQ-08 rozhoduje Reservation Management, spouští ho ale Reservation UI. Vypršení tedy nastane, jen když běží aspoň jedna instance (přijaté v ADR-04). |
+| C2 ↔ G2 | Má každá významná odpovědnost jednoho ownera? | Ano, tabulka přidělení v G2 (R1–R8). Opraveno: R7 měl v G2 vlastníka „zpracování selhání“ v Notification Integration, ale význam selhání určuje ADR-04 v Reservation Management. Upraveno, Notification Integration vlastní jen doručení. |
+| G2 ↔ H1 | Používá sekvence pouze existující/povolené závislosti? | Ano: UI→RM, RM→PC, RM→ST, RM→NI, NI→Notification Service. Žádná zpráva z UI nejde do Store ani do pravidel. |
+| H1 ↔ H2 | Má každá významná zpráva/operace strukturálního vlastníka? | Ano: `confirm`/`approve` → `ReservationService`, `find` → `PlaceCatalog`, `transaction`/`get`/`for_place`/`save` → `ReservationRepository`, `domain.confirm`/`domain.approve` → `ReservationRules`, `reservation_changed` → `Notifier`. |
+| statechart ↔ G3/H1 | Rozhoduje transition správný owner? | Ano, všech 9 přechodů v0.2 rozhoduje Reservation Management. V H1 se `PENDING_APPROVAL` i `CONFIRMED` nastavují v RM (`domain.confirm`, `domain.approve`). |
+| G2 ↔ G4 | Je každý logický prvek realisticky namapovaný do runtime? | Ano, všech 5 prvků je v procesu `run.py`, data v `parking.db`, Notification Service mimo proces. |
+| ADR ↔ G2/G4 | Je přijaté rozhodnutí skutečně vidět v architektuře? | Ano. UI má jedinou závislost (na RM), transakci i notifikaci po commitu volá jen RM a G4 nepřidává runtime prvek. |
+
+**Rozpory nalezené a opravené v artefaktech:**
+1. G2 uváděl operaci `list`, H2 ji neměl. Sjednoceno na `places`, `reservations`.
+2. Vlastník selhání notifikace se lišil mezi G2 a ADR-04 (viz C2 ↔ G2).
+3. G1 a C2-R7 hlásily notifikaci jen o konečném výsledku, H1 posílá i
+   `PENDING_APPROVAL`. Sjednoceno na „každá změna stavu existující
+   rezervace“.
+
+## J. AS-IS → TO-BE delta
+
+| Oblast | AS-IS | TO-BE | Akce |
+|---|---|---|---|
+| řízení use-casů (create, check, confirm, approve, reject, cancel) | `App` v `gui.py` skládá pravidlo, místo a `now` | metody `ReservationService` (`service.py`), GUI je jen volá | CHANGE |
+| hranice transakce | `repository.apply(id, callback)` provede libovolné předané pravidlo | `repository.transaction()`. Pravidlo uvnitř volá jen služba, `apply` se ruší | CHANGE |
+| zámek SQLite (`BEGIN IMMEDIATE`) | v `_write_lock` | stejný mechanismus v `transaction()` | KEEP |
+| katalog míst | `PLACES` v `gui.py` | `PlaceCatalog` v `places.py`, používá ho služba | CHANGE |
+| `now` | `App._now()` v GUI | hodiny (`clock`) služby, v testech injektované | CHANGE |
+| vypršení | `refresh()` v GUI volá `expire_if_due` přes `apply` | `service.expire_due()`, volané z `refresh()` a z časovače GUI každou minutu | CHANGE |
+| notifikace | neexistuje | `Notifier` + `LogNotifier` (`notification.py`), voláno ze služby po commitu, selhání zalogováno | CHANGE |
+| doménová pravidla (`domain.py`) | čisté funkce, jediné místo zápisu `state` | stejné | KEEP |
+| testy souběhu (`test_concurrency.py`) | volají `repo.apply` | volají `ReservationService` (zpoždění mezi kontrolou a zápisem přes pomalý repozitář) | CHANGE |
+| pravidlo závislostí ADR-04 | neověřeno; GUI dnes importuje repozitář i přechodová pravidla | GUI závisí jen na službě, `state` zapisuje jen `domain.py` | VERIFY (L2) |
+| doména bez I/O | pravděpodobně platí | `domain.py` neimportuje `sqlite3`, `tkinter` ani jiné moduly `parking` | VERIFY (L2) |
