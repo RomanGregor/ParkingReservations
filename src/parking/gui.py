@@ -3,16 +3,11 @@ import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from tkinter import messagebox, ttk
 
-from parking.domain import (
-    ParkingPlace, RuleViolation, State, User,
-    approve, cancel, confirm, create_reservation, expire_if_due, is_available, reject,
-)
-from parking.repository import ReservationRepository
+from parking.domain import ParkingPlace, RuleViolation, User
+from parking.service import ReservationService, open_service
 
-PLACES = [ParkingPlace(f"p{i}", f"A-{i:02d}") for i in range(1, 5)] + [
-    ParkingPlace("p5", "VIP-01", requires_approval=True),
-]
 FMT = "%Y-%m-%d %H:%M"
+EXPIRY_CHECK_MS = 60_000  # REQ-08: look for due PENDING_APPROVAL requests every minute
 
 
 def _parse(text: str) -> datetime:
@@ -20,21 +15,22 @@ def _parse(text: str) -> datetime:
 
 
 class App(tk.Tk):
-    def __init__(self, repo: ReservationRepository):
+    def __init__(self, service: ReservationService):
         super().__init__()
-        self.repo = repo
+        self.service = service
+        self.places = service.places()
         self.title("Parking reservations")
 
         form = ttk.Frame(self, padding=10)
         form.grid(row=0, column=0, sticky="ew")
-        self.place = tk.StringVar(value=PLACES[0].label)
+        self.place = tk.StringVar(value=self.places[0].label)
         self.user = tk.StringVar()
         default_start = datetime.now() + timedelta(hours=2)
         default_end = default_start + timedelta(hours=2)
         self.start = tk.StringVar(value=default_start.strftime(FMT))
         self.end = tk.StringVar(value=default_end.strftime(FMT))
         for row, (label, widget) in enumerate([
-            ("Place", ttk.Combobox(form, textvariable=self.place, values=[p.label for p in PLACES], state="readonly")),
+            ("Place", ttk.Combobox(form, textvariable=self.place, values=[p.label for p in self.places], state="readonly")),
             ("User", ttk.Entry(form, textvariable=self.user)),
             ("Start (UTC)", ttk.Entry(form, textvariable=self.start)),
             ("End (UTC)", ttk.Entry(form, textvariable=self.end)),
@@ -64,14 +60,11 @@ class App(tk.Tk):
         self.table.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
-        self.refresh()
+        self._tick()
 
     # --- helpers -------------------------------------------------------
     def _place(self) -> ParkingPlace:
-        return next(p for p in PLACES if p.label == self.place.get())
-
-    def _place_of(self, r) -> ParkingPlace:
-        return next(p for p in PLACES if p.id == r.place_id)
+        return next(p for p in self.places if p.label == self.place.get())
 
     def _selected_id(self) -> str | None:
         sel = self.table.selection()
@@ -87,31 +80,29 @@ class App(tk.Tk):
             messagebox.showerror("Not allowed", str(e))
         self.refresh()
 
-    def _now(self) -> datetime:
-        return datetime.now(timezone.utc)
+    def _tick(self):
+        # Schedule first, so one failed refresh does not stop the expiry check.
+        self.after(EXPIRY_CHECK_MS, self._tick)
+        self.refresh()
 
     def refresh(self):
-        # A PENDING_APPROVAL request nobody decided on before its own start
-        # time is no longer actionable (see OP-05 / expire_if_due).
-        now = self._now()
-        for p in PLACES:
-            for r in self.repo.for_place(p.id):
-                if r.state == State.PENDING_APPROVAL and now >= r.start:
-                    self.repo.apply(r.id, lambda r, _: expire_if_due(r, now))
+        # The UI only triggers the expiry check; ReservationService decides
+        # which requests expire (REQ-08, ADR-04).
+        self.service.expire_due()
 
         self.table.delete(*self.table.get_children())
-        labels = {p.id: p.label for p in PLACES}
-        for p in PLACES:
-            for r in sorted(self.repo.for_place(p.id), key=lambda r: r.start):
-                self.table.insert("", "end", iid=r.id, values=(
-                    r.id[:8], labels[r.place_id], r.user_id,
-                    r.start.strftime(FMT), r.end.strftime(FMT), r.state.value))
+        order = {p.id: i for i, p in enumerate(self.places)}
+        labels = {p.id: p.label for p in self.places}
+        for r in sorted(self.service.reservations(), key=lambda r: (order[r.place_id], r.start)):
+            self.table.insert("", "end", iid=r.id, values=(
+                r.id[:8], labels[r.place_id], r.user_id,
+                r.start.strftime(FMT), r.end.strftime(FMT), r.state.value))
 
     # --- actions -------------------------------------------------------
     def check(self):
         def go():
             place = self._place()
-            free = is_available(place.id, _parse(self.start.get()), _parse(self.end.get()), self.repo.for_place(place.id))
+            free = self.service.check(place.id, _parse(self.start.get()), _parse(self.end.get()))
             messagebox.showinfo("Availability", f"{place.label} is {'available' if free else 'NOT available'}.")
         self._guard(go)
 
@@ -120,40 +111,39 @@ class App(tk.Tk):
             if not self.user.get().strip():
                 raise ValueError("user is required")
             user = User(self.user.get().strip(), self.user.get().strip())
-            self.repo.save(create_reservation(
-                self._place(), user, _parse(self.start.get()), _parse(self.end.get()), self._now()))
+            self.service.create(self._place().id, user, _parse(self.start.get()), _parse(self.end.get()))
         self._guard(go)
 
-    # Confirm, Approve, Reject and Cancel go through repo.apply, which checks
-    # the rule and writes the result atomically (REQ-04).
+    # Confirm, Approve, Reject and Cancel only request the transition;
+    # ReservationService decides it and writes it atomically (REQ-04, ADR-04).
     def confirm(self):
         def go():
             if rid := self._selected_id():
-                self.repo.apply(rid, lambda r, existing: confirm(r, existing, self._place_of(r), self._now()))
+                self.service.confirm(rid)
         self._guard(go)
 
     def approve(self):
         def go():
             if rid := self._selected_id():
-                self.repo.apply(rid, lambda r, existing: approve(r, existing, self._now()))
+                self.service.approve(rid)
         self._guard(go)
 
     def reject(self):
         def go():
             if rid := self._selected_id():
-                self.repo.apply(rid, lambda r, _: reject(r, self._now()))
+                self.service.reject(rid)
         self._guard(go)
 
     def cancel(self):
         def go():
             if rid := self._selected_id():
-                self.repo.apply(rid, lambda r, _: cancel(r, self._now()))
+                self.service.cancel(rid)
         self._guard(go)
 
 
 def main(db_path: str = "parking.db") -> None:
-    repo = ReservationRepository(db_path)
+    service = open_service(db_path)
     try:
-        App(repo).mainloop()
+        App(service).mainloop()
     finally:
-        repo.close()
+        service.close()

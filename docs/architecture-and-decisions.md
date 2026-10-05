@@ -3,16 +3,23 @@
 ## Overview
 
 ```
-tests/            → exercise domain rules and persistence
+tests/              → exercise domain rules, the service, persistence, races
+                      and the architecture rule
 src/parking/
-  domain.py       → ParkingPlace, User, Reservation, State + business rules
-  repository.py   → SQLite persistence of reservations
+  gui.py            → Reservation UI: input and display, calls the service only
+  service.py        → Reservation Management: every state change, transaction
+                      boundary, clock (ADR-04)
+  domain.py         → ParkingPlace, User, Reservation, State + business rules
+  places.py         → Place Catalog
+  repository.py     → Reservation Store: SQLite persistence, transaction()
+  notification.py   → Notification Integration: Notifier + LogNotifier stub
 ```
 
-The domain module has no I/O. The repository stores and loads reservations;
-rule checks that need existing data (overlap) take the loaded reservations
-as input. The Notification Service boundary will be a small interface in
-the domain with a stub implementation (not in C01).
+The domain module has no I/O. Clients (the GUI now, the HTTP API in CP1)
+go through `ReservationService`; it loads the reservation and the other
+reservations of its place, applies the domain rule and saves, all inside
+one `transaction()`, and notifies the Driver after the commit. See C03
+below, ADR-04.
 
 ## Decisions
 

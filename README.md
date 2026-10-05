@@ -41,8 +41,9 @@ docs/
   specification.md              # C02: baseline v0.1/v0.2 behavior spec + diagrams
   evidence-and-evolution.md     # spike + C02 evidence
 run.py                          # launches the GUI
-src/parking/                    # domain model, persistence, tkinter GUI
-tests/                          # unit tests (spike evidence lives here)
+src/parking/                    # service (state changes), domain rules, place catalog,
+                                # persistence, notification stub, tkinter GUI
+tests/                          # unit, service, concurrency and architecture tests
 ```
 
 ## CP1 walking skeleton

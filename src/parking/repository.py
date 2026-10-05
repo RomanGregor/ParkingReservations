@@ -2,9 +2,8 @@
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Callable
 
-from parking.domain import Reservation, RuleViolation, State
+from parking.domain import Reservation, State
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reservation (
@@ -21,7 +20,7 @@ CREATE TABLE IF NOT EXISTS reservation (
 class ReservationRepository:
     def __init__(self, path: str):
         # Autocommit mode: single statements commit on their own and
-        # `apply` opens its transactions explicitly.
+        # `transaction` opens its transactions explicitly.
         self._db = sqlite3.connect(path, isolation_level=None)
         self._db.execute(_SCHEMA)
 
@@ -35,27 +34,15 @@ class ReservationRepository:
             (r.id, r.place_id, r.user_id, r.start.isoformat(), r.end.isoformat(), r.state.value),
         )
 
-    def apply(self, reservation_id: str, operation: Callable[[Reservation, list[Reservation]], object]) -> Reservation:
-        """Run a state-changing operation (confirm, approve, reject, cancel,
-        expire) atomically.
-
-        The reservation and the other reservations of its place are read, the
-        domain rule is checked and the result is written under one SQLite
-        write lock (BEGIN IMMEDIATE). Another connection cannot slip its own
-        write between our check and our write, so two conflicting confirmations
-        cannot both succeed (REQ-04) and a concurrent Confirm cannot overwrite
-        a Cancel.
-        """
-        with self._write_lock():
-            r = self.get(reservation_id)
-            if r is None:
-                raise RuleViolation("reservation does not exist")
-            operation(r, self.for_place(r.place_id))
-            self.save(r)
-        return r
-
     @contextmanager
-    def _write_lock(self):
+    def transaction(self):
+        """One state change as an atomic unit (ADR-04).
+
+        BEGIN IMMEDIATE takes the SQLite write lock before anything is read,
+        so another connection cannot slip its own write between the caller's
+        rule check and its write. ReservationService decides what runs inside;
+        the repository does not take rules.
+        """
         self._db.execute("BEGIN IMMEDIATE")
         try:
             yield
@@ -75,6 +62,12 @@ class ReservationRepository:
         rows = self._db.execute(
             'SELECT id, place_id, user_id, start, "end", state FROM reservation WHERE place_id = ?',
             (place_id,),
+        ).fetchall()
+        return [self._to_reservation(row) for row in rows]
+
+    def all(self) -> list[Reservation]:
+        rows = self._db.execute(
+            'SELECT id, place_id, user_id, start, "end", state FROM reservation'
         ).fetchall()
         return [self._to_reservation(row) for row in rows]
 
