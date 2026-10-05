@@ -91,3 +91,66 @@ Průchod scénářem v kódu (Approve):
 AD-01 a AD-02 jsou z C02. AD-03 vychází z hranice systému z C01, AD-04
 z nálezů Části A a z plánu CP1. Role (F6) jako driver nebereme. Patří k
 přihlašování, které CP1 zatím nevyžaduje (viz zbývající rizika).
+
+## C1. Doménový třídní model
+
+Pojmy pro scénář Confirm → Approve. `TimeInterval` je v kódu zatím jen
+dvojice `start`/`end` v `Reservation`. Jako pojem ho uvádíme kvůli BR-01.
+
+```mermaid
+classDiagram
+    class User {
+        id
+        name
+    }
+    class Driver
+    class FacilityManager
+    class ParkingPlace {
+        id
+        label
+        requires_approval
+    }
+    class Reservation {
+        id
+        state : ReservationState
+    }
+    class TimeInterval {
+        start
+        end
+        overlaps(other)
+    }
+    class ReservationState {
+        <<enumeration>>
+        DRAFT
+        PENDING_APPROVAL
+        CONFIRMED
+        REJECTED
+        EXPIRED
+        CANCELLED
+    }
+    User <|-- Driver
+    User <|-- FacilityManager
+    Driver "1" -- "0..*" Reservation : vlastní
+    ParkingPlace "1" -- "0..*" Reservation : pro místo
+    Reservation "1" *-- "1" TimeInterval : interval [start, end)
+    FacilityManager "0..1" -- "0..*" Reservation : schvaluje / zamítá
+    note for ParkingPlace "BR-02: CONFIRMED rezervace téhož místa\nse nepřekrývají"
+    note for TimeInterval "BR-01: [start, end); BR-04: nejvýš 24 h;\nBR-05: start >= now + 1 h"
+```
+
+Oproti C02 je nové jen to, že role Driver a Facility manager jsou
+pojmenované. Facility manager rozhoduje o žádosti (OP-05). V kódu role zatím
+nejsou (Část A F6).
+
+## C2. Odpovědnosti systému
+
+| # | Zdroj | Odpovědnost | Co musí rozhodovat / vlastnit | Jeden vlastník? | Důvod | Seskupit s | Oddělit od |
+|---|---|---|---|---|---|---|---|
+| R1 | Confirm, Approve, Cancel + statechart v0.2 | rozhodnout, zda je přechod lifecycle povolen | přechody stavů `Reservation` | ano | různé části nesmí rozhodnout odlišně | R2, R3 (stejný stav) | UI, SQLite (jiný důvod změny) |
+| R2 | BR-02, REQ-04, REQ-06 | vyhodnotit kolizi a zachovat BR-02 i při souběhu: čtení, kontrola a zápis jako jeden nedělitelný krok | rozhodnutí o potvrzení při kolizi, hranice transakce | ano | kdyby atomičnost zajišťoval každý klient sám, jeden ji vynechá (F2) | R1 | UI (klient ji nesmí obejít) |
+| R3 | OP-05, AD-02 | spravovat čekající žádost o schválení | stav `PENDING_APPROVAL` a jeho uzavření approve / reject / expire | ano | stav přežívá požadavek i zavření aplikace | R1 (je to stav lifecycle) | spouštěč vypršení (R4) |
+| R4 | REQ-08, AD-02 | spustit kontrolu vypršení v čase | **kdy** se kontrola spustí, ne **zda** žádost vyprší | ne (spouštěčů může být víc, rozhodnutí je R1/R3) | plynutí času nemá aktéra | — | R1/R3 (jiný důvod změny: provoz a plánování) |
+| R5 | Část A F3, REQ-03 v0.2 | poskytnout katalog míst včetně `requires_approval` | seznam míst a jejich vlastnosti | ano | Confirm se podle místa větví; dva katalogy = dvě chování | — | UI (dnes je katalog v GUI) |
+| R6 | C01 spike, D2 | uložit rezervace a načíst je pro kontrolu kolize | uložený stav, zámek pro zápis | ano | jediný zdroj pravdy pro všechny instance | — | pravidla R1/R2 (jiná technologie; SQLite se může vyměnit, Unknown z C01) |
+| R7 | AD-03, Project Frame C01 | oznámit Driverovi výsledek (potvrzeno, zrušeno, zamítnuto, vypršelo) | doručení a případné opakování | podle návrhu | externí služba může selhat a její výpadek musí mít jasný význam | — | R1/R2 (jiná failure boundary a externí technologie; nesmí být uvnitř transakce) |
+| R8 | AD-04, README CP1 | přijmout požadavek uživatele a zobrazit výsledek | nic nerozhoduje, přechod jen vyžaduje | ne | přibude HTTP klient vedle GUI | — | R1–R7 (jiný důvod změny: prezentace a protokol) |
