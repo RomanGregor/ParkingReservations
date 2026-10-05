@@ -152,7 +152,7 @@ nejsou (Část A F6).
 | R4 | REQ-08, AD-02 | spustit kontrolu vypršení v čase | **kdy** se kontrola spustí, ne **zda** žádost vyprší | ne (spouštěčů může být víc, rozhodnutí je R1/R3) | plynutí času nemá aktéra | — | R1/R3 (jiný důvod změny: provoz a plánování) |
 | R5 | Část A F3, REQ-03 v0.2 | poskytnout katalog míst včetně `requires_approval` | seznam míst a jejich vlastnosti | ano | Confirm se podle místa větví; dva katalogy = dvě chování | — | UI (dnes je katalog v GUI) |
 | R6 | C01 spike, D2 | uložit rezervace a načíst je pro kontrolu kolize | uložený stav, zámek pro zápis | ano | jediný zdroj pravdy pro všechny instance | — | pravidla R1/R2 (jiná technologie; SQLite se může vyměnit, Unknown z C01) |
-| R7 | AD-03, Project Frame C01 | oznámit Driverovi výsledek (potvrzeno, zrušeno, zamítnuto, vypršelo) | doručení a případné opakování | podle návrhu | externí služba může selhat a její výpadek musí mít jasný význam | — | R1/R2 (jiná failure boundary a externí technologie; nesmí být uvnitř transakce) |
+| R7 | AD-03, Project Frame C01 | oznámit Driverovi změnu stavu rezervace (čeká na schválení, potvrzeno, zamítnuto, zrušeno, vypršelo) | doručení a případné opakování | podle návrhu | externí služba může selhat a její výpadek musí mít jasný význam | — | R1/R2 (jiná failure boundary a externí technologie; nesmí být uvnitř transakce) |
 | R8 | AD-04, README CP1 | přijmout požadavek uživatele a zobrazit výsledek | nic nerozhoduje, přechod jen vyžaduje | ne | přibude HTTP klient vedle GUI | — | R1–R7 (jiný důvod změny: prezentace a protokol) |
 
 ## D. Hlavní rozhodovací otázka
@@ -292,7 +292,7 @@ flowchart LR
     FM -- "approve, reject, cancel" --> RS
     RS -- "stav rezervací, chyba pravidla" --> D
     RS -- "seznam žádostí ke schválení" --> FM
-    RS -- "notifikace o výsledku rezervace<br/>(potvrzeno, zrušeno, zamítnuto, vypršelo)" --> NS
+    RS -- "notifikace o změně stavu rezervace<br/>(čeká na schválení, potvrzeno, zamítnuto,<br/>zrušeno, vypršelo)" --> NS
 ```
 
 Vypršení (REQ-08) nemá aktéra, způsobuje ho plynutí času. Proto v kontextu
@@ -307,14 +307,14 @@ flowchart TB
         RM["<b>Reservation Management</b><br/>service.py + domain.py<br/>role: přechody stavu, BR-02, hranice transakce<br/>owns: Reservation lifecycle, hodiny (now)"]
         PC["<b>Place Catalog</b><br/>places.py<br/>role: místa a jejich vlastnosti<br/>owns: seznam míst, requires_approval"]
         ST["<b>Reservation Store</b><br/>repository.py<br/>role: uložení a načtení rezervací<br/>owns: uložená data, zámek pro zápis"]
-        NI["<b>Notification Integration</b><br/>notification.py<br/>role: oznámit výsledek přechodu<br/>owns: rozhraní Notifier, zpracování selhání"]
+        NI["<b>Notification Integration</b><br/>notification.py<br/>role: doručit notifikaci o změně stavu<br/>owns: rozhraní Notifier a adaptér na službu"]
     end
     NS[[Notification Service]]
 
     UI -- "create, check, confirm, approve,<br/>reject, cancel, expire_due,<br/>places, reservations" --> RM
     RM -- "find(place_id)" --> PC
     RM -- "transaction(), get, for_place, save" --> ST
-    RM -- "reservation_changed(r)<br/>až po commitu" --> NI
+    RM -- "reservation_changed(r)<br/>až po commitu, selhání jen zaloguje" --> NI
     NI -- "notification request" --> NS
 ```
 
@@ -328,7 +328,7 @@ flowchart TB
 | R4 spustit kontrolu vypršení | Reservation UI (časovač a obnovení). Jen spouští, nerozhoduje |
 | R5 katalog míst | Place Catalog |
 | R6 uložení rezervací | Reservation Store |
-| R7 notifikace | Notification Integration |
+| R7 notifikace | Notification Integration (doručení). Význam selhání určuje Reservation Management: výsledek přechodu se nemění |
 | R8 vstup a zobrazení | Reservation UI |
 
 **Povolené závislosti** jsou jen ty nakreslené. Zakázané, protože by
@@ -384,3 +384,132 @@ Jeden deployable (Python aplikace) může běžet ve více instancích nad
 jedním souborem SQLite. Souběh mezi instancemi řeší zámek SQLite pro zápis
 uvnitř transakce Reservation Management. HTTP API z CP1 bude další proces
 se stejnými prvky kromě Reservation UI. ADR-04 se tím nemění.
+
+## H1. Návrhový sekvenční diagram — Confirm na místě se schválením, později Approve
+
+Lifelines odpovídají prvkům G2. Doménová pravidla (`domain.py`) jsou
+uvnitř Reservation Management, proto jsou kreslena jako jeho vlastní volání.
+
+```mermaid
+sequenceDiagram
+    actor D as Driver
+    actor FM as Facility manager
+    participant UI as Reservation UI
+    participant RM as Reservation Management<br/>(ReservationService)
+    participant PC as Place Catalog
+    participant ST as Reservation Store
+    participant NI as Notification Integration
+    participant NS as Notification Service
+
+    D->>UI: Confirm X (VIP-01, 08:00–09:00)
+    UI->>RM: confirm(X.id)
+    RM->>ST: transaction() — BEGIN IMMEDIATE
+    RM->>ST: get(X.id), for_place(VIP-01)
+    RM->>PC: find(VIP-01)
+    PC-->>RM: ParkingPlace(requires_approval=true)
+    RM->>RM: domain.confirm(X, others, place, now) → PENDING_APPROVAL
+    RM->>ST: save(X) — COMMIT
+    RM->>NI: reservation_changed(X)
+    NI->>NS: notification request
+    RM-->>UI: X: PENDING_APPROVAL
+
+    Note over D,NS: Požadavek skončil. Stav PENDING_APPROVAL je uložen v SQLite<br/>a čeká na rozhodnutí, i když se aplikace zavře.
+
+    FM->>UI: Approve X
+    UI->>RM: approve(X.id)
+    RM->>ST: transaction() — BEGIN IMMEDIATE<br/>(čeká, pokud zámek drží jiná instance)
+    RM->>ST: get(X.id), for_place(VIP-01)
+    RM->>RM: domain.approve(X, others, now)
+    alt bez kolize s CONFIRMED rezervací
+        RM->>ST: save(X: CONFIRMED) — COMMIT
+        RM->>NI: reservation_changed(X)
+        NI->>NS: notification request
+        Note over RM,NS: Když notifikace selže, Reservation Management<br/>chybu jen zaloguje, X zůstává CONFIRMED (ADR-04).
+        RM-->>UI: X: CONFIRMED
+    else kolize — Y (08:30–10:00) mezitím schválila jiná instance
+        RM->>ST: ROLLBACK
+        RM-->>UI: RuleViolation, X zůstává PENDING_APPROVAL
+    end
+```
+
+## H2. Zaměřený návrhový třídní diagram
+
+```mermaid
+classDiagram
+    class ReservationService {
+        -clock : Callable → datetime
+        +places() list~ParkingPlace~
+        +reservations() list~Reservation~
+        +create(place_id, user, start, end) Reservation
+        +check(place_id, start, end) bool
+        +confirm(reservation_id) Reservation
+        +approve(reservation_id) Reservation
+        +reject(reservation_id) Reservation
+        +cancel(reservation_id) Reservation
+        +expire_due() list~Reservation~
+        -_transition(reservation_id, rule) Reservation
+    }
+    class PlaceCatalog {
+        +all() list~ParkingPlace~
+        +find(place_id) ParkingPlace
+    }
+    class ReservationRepository {
+        +transaction()
+        +get(reservation_id) Reservation
+        +for_place(place_id) list~Reservation~
+        +all() list~Reservation~
+        +save(reservation)
+    }
+    class Notifier {
+        <<interface>>
+        +reservation_changed(reservation)
+    }
+    class LogNotifier {
+        +reservation_changed(reservation)
+    }
+    class ReservationRules {
+        <<module domain.py>>
+        +create_reservation(place, user, start, end, now) Reservation
+        +is_available(place_id, start, end, existing) bool
+        +confirm(r, existing, place, now)
+        +approve(r, existing, now)
+        +reject(r, now)
+        +cancel(r, now)
+        +expire_if_due(r, now) bool
+    }
+    class Reservation {
+        +id
+        +place_id
+        +user_id
+        +start
+        +end
+        +state : State
+        +overlaps(other) bool
+    }
+    class ParkingPlace {
+        +id
+        +label
+        +requires_approval
+    }
+    class State {
+        <<enumeration>>
+    }
+
+    ReservationService --> "1" PlaceCatalog
+    ReservationService --> "1" ReservationRepository
+    ReservationService --> "1" Notifier
+    ReservationService ..> ReservationRules : volá pravidla
+    LogNotifier ..|> Notifier
+    ReservationRules ..> Reservation : mění state
+    ReservationRepository ..> Reservation : ukládá
+    PlaceCatalog "1" o-- "1..*" ParkingPlace
+    Reservation "0..*" --> "1" ParkingPlace : place_id
+    Reservation --> State
+```
+
+Vlastníci operací z H1: `confirm`, `approve`, `transaction` a `reservation_changed`
+mají v H2 třídu. `domain.confirm` a `domain.approve` patří modulu
+`ReservationRules`, který je součástí Reservation Management (G2).
+`ReservationService` a `ReservationRules` dohromady tvoří Reservation
+Management, `PlaceCatalog` je Place Catalog, `ReservationRepository` je
+Reservation Store a `Notifier` s `LogNotifier` jsou Notification Integration.
