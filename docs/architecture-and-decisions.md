@@ -154,3 +154,128 @@ nejsou (Část A F6).
 | R6 | C01 spike, D2 | uložit rezervace a načíst je pro kontrolu kolize | uložený stav, zámek pro zápis | ano | jediný zdroj pravdy pro všechny instance | — | pravidla R1/R2 (jiná technologie; SQLite se může vyměnit, Unknown z C01) |
 | R7 | AD-03, Project Frame C01 | oznámit Driverovi výsledek (potvrzeno, zrušeno, zamítnuto, vypršelo) | doručení a případné opakování | podle návrhu | externí služba může selhat a její výpadek musí mít jasný význam | — | R1/R2 (jiná failure boundary a externí technologie; nesmí být uvnitř transakce) |
 | R8 | AD-04, README CP1 | přijmout požadavek uživatele a zobrazit výsledek | nic nerozhoduje, přechod jen vyžaduje | ne | přibude HTTP klient vedle GUI | — | R1–R7 (jiný důvod změny: prezentace a protokol) |
+
+## D. Hlavní rozhodovací otázka
+
+**Rozhodovací otázka:** Kde má být vlastněno provádění přechodů stavu
+`Reservation` (Confirm, Approve, Reject, Cancel, Expire) včetně hranice
+transakce, aby BR-02 a statechart v0.2 platily stejně pro každého klienta
+(GUI dnes, HTTP v CP1) i ve chvíli, kdy schválení přijde později?
+
+Vychází z AD-01 a AD-04 a dotýká se AD-02 a AD-03. Mění vlastnictví
+(kdo smí měnit stav), závislosti (kdo smí sahat na úložiště) i interakci
+(kde se volá notifikace).
+
+## E1. Alternativy
+
+**Alternativa A — klient skládá use-case, repozitář drží transakci** (dnešní
+stav, jen rozšířený o dalšího klienta)
+
+```
+[GUI]                       [HTTP API (CP1)]
+  | vybere místo, now,         | totéž znovu
+  | zavolá pravidlo            |
+  +--- apply(id, pravidlo) ----+----> [Reservation Store]
+  |                                   owns: transakce (BEGIN IMMEDIATE)
+  v                                         | volá předané pravidlo
+[Reservation Rules] <-----------------------+
+```
+
+**Alternativa B — aplikační služba vlastní přechody**
+
+```
+[GUI]                [HTTP API (CP1)]
+   \                     /
+    \  confirm(id), approve(id), reject(id), cancel(id), expire_due()
+     v                 v
+ [Reservation Management]
+ owns: přechody stavu, transakce, katalog míst, hodiny (now)
+     | pravidla           | transaction(), get, save        | po commitu
+     v                    v                                 v
+ [Reservation Rules]   [Reservation Store]       [Notification Integration]
+```
+
+Rozdíl: v A závisí každý klient na úložišti i na pravidlech a sám rozhoduje,
+co, s jakým místem a s jakým `now` se zavolá. V B klient zná jen službu.
+Úložiště a pravidla použije jen ona.
+
+Zvažovali jsme i variantu C: vynutit BR-02 v databázi triggerem. Zavrhli
+jsme ji, protože pravidlo by bylo dvakrát (Python a SQL) a REQ-03 v0.2
+(větvení podle místa) by v triggeru zůstalo stejně neřešené.
+
+## E2. Porovnání vůči driverům
+
+| Driver / kritérium | Alternativa A | Alternativa B |
+|---|---|---|
+| **AD-01 konzistence BR-02** | platí, jen pokud každý klient pošle pravidlo přes `apply`. Volání `domain.confirm` + `save` mimo něj projde bez chyby a REQ-04 tiše poruší (F2) | jediná cesta k přechodu je metoda služby a ta vždy otevře transakci. Obejití zachytí architektonický test (L2) |
+| **AD-02 odložené schválení a vypršení** | stav `PENDING_APPROVAL` přežije v SQLite. Vypršení ale spouští a `now` dodává každý klient sám, dnes jen `refresh()` v GUI | `expire_due()` je operace služby s jedněmi hodinami. Spustit ji může GUI časovač, HTTP i budoucí plánovač |
+| **AD-03 selhání notifikace** | každý klient by notifikaci volal sám. Hrozí volání uvnitř callbacku: zámek DB drží během externího volání a výjimka zruší už rozhodnuté potvrzení | jedno místo: služba volá notifikaci až po commitu. Selhání se zaloguje a výsledek přechodu se nemění |
+| **AD-04 druhý klient / změna** | HTTP musí zopakovat 6 skladeb use-casu, katalog míst i vypršení. Změna statechartu (v0.3) se dělá v každém klientovi | HTTP je tenký adaptér nad službou. Změna statechartu se dělá ve službě a v doméně |
+| **provozní složitost** | jeden proces + SQLite, nic nového | jeden proces + SQLite, nic nového. Přibude jedna vrstva (modul) a skládání závislostí při startu |
+
+## E3. Průchod scénářem v obou alternativách
+
+Scénář: Driver potvrdí `X` (08:00–09:00) na `VIP-01`, později schvaluje
+manažer. Mezitím existuje žádost `Y` (08:30–10:00) na stejné místo.
+
+| Krok / událost | Alternativa A | Alternativa B |
+|---|---|---|
+| Confirm `X` začne | GUI vybere `VIP-01` ze svého `PLACES`, zavolá `repo.apply(X, confirm(..., místo, now))` | GUI zavolá `service.confirm(X)`. Služba si místo najde v katalogu a otevře transakci |
+| je potřeba schválení | `domain.confirm` → `PENDING_APPROVAL`, commit. Kdyby měl HTTP klient jinou kopii katalogu bez `requires_approval`, `X` by skončila rovnou `CONFIRMED` | `domain.confirm` → `PENDING_APPROVAL`, commit. Katalog je jen jeden |
+| požadavek / aplikace skončí | stav je v SQLite, nic dalšího neběží | totéž |
+| schválení přijde později | manažer v GUI: `repo.apply(X, approve(..., now))` | manažer v GUI: `service.approve(X)` |
+| **souběh:** dva manažeři ve dvou instancích současně schválí `X` a `Y` | `BEGIN IMMEDIATE` je seřadí, druhé schválení uvidí `CONFIRMED` a selže, **pokud** oba klienti použili `apply`. Klient, který volá `approve` + `save` přímo, způsobí dvě `CONFIRMED` | obě volání jdou přes stejnou metodu služby, a tedy přes stejnou transakci. Skončí právě jedna `CONFIRMED`, druhá zůstane `PENDING_APPROVAL` s chybou kolize |
+| `start` uplyne bez rozhodnutí | `X` vyprší, až některé GUI obnoví tabulku | GUI volá `service.expire_due()` při obnovení a periodicky časovačem. Pořád ale jen, když běží aspoň jedna instance |
+| Notification Service selže po schválení | neurčeno, záleží na klientovi | `X` zůstane `CONFIRMED`, selhání se zaloguje, notifikace se neopakuje |
+
+Obě alternativy umí požadované chování. Liší se v tom, **kdo za něj ručí**:
+v A každý klient zvlášť, v B jedno místo.
+
+## F. ADR
+
+### ADR-04 — Kde se provádějí přechody stavu Reservation a kde leží hranice transakce
+
+**Kontext:** Aplikace splňuje REQ-04 a REQ-06 díky `ReservationRepository.apply`
+(`BEGIN IMMEDIATE`). Use-casy ale skládá GUI: volí pravidlo, místo i `now` a
+spouští vypršení (Část A F1–F4). CP1 přidá HTTP klienta. Notification
+Service ze C01 v kódu chybí (F5).
+
+**Drivery:** AD-01, AD-02, AD-03, AD-04.
+
+**Alternativa A:** klient skládá use-case a volá `repository.apply(id, pravidlo)`.
+Transakci drží repozitář, katalog míst a `now` dodává klient.
+
+**Alternativa B:** aplikační služba `ReservationService` (logický prvek
+Reservation Management) je jediný vstup pro přechody stavu. Otevírá
+transakci, drží katalog míst a hodiny a po commitu volá Notification
+Integration. Klienti na úložiště nesahají.
+
+**Rozhodnutí:** Alternativa B.
+- Přechody stavu `Reservation` provádí jen Reservation Management. Doménová
+  pravidla zůstávají čistá (bez I/O) a volá je jen služba.
+- Hranice transakce = jedna metoda služby (`BEGIN IMMEDIATE` … `COMMIT`).
+  Repozitář dává `transaction()`, ale pravidla nepřijímá.
+- Notifikace se posílá až po commitu, best-effort: selhání nemění výsledek
+  přechodu a neopakuje se.
+- Vypršení spouští klient přes `expire_due()`. O tom, zda žádost vyprší,
+  rozhoduje služba se svými hodinami.
+
+**Důvod:** BR-02 a statechart musí platit nezávisle na tom, kolik klientů
+bude a jak pečlivě je někdo napíše (E2 AD-01, E3 souběh). Druhý klient
+v CP1 by v A zkopíroval logiku, v B jen zavolá službu. Notifikace má
+jedno definované místo mimo transakci.
+
+**Přijaté negativní důsledky:**
+- další vrstva a nepřímost: GUI → služba → repozitář;
+- služba je společné místo pro všechny use-casy a může přerůst. Při dalších
+  operacích (např. EV nabíjení z future pressure) ji rozdělíme po use-casech;
+- zámek celé SQLite databáze zůstává (souběžné zápisy se řadí);
+- vypršení dál nastane jen tehdy, když běží aspoň jedna instance aplikace;
+- notifikace se při výpadku ztratí (žádné opakování ani outbox).
+
+**Rozhodnutí znovu otevřeme, když:**
+- přejdeme ze SQLite na serverovou databázi nebo víc procesů na víc strojích
+  (Unknown z C01). Pak řešit zamykání po místech místo celé DB;
+- bude vyžadováno doručení notifikace nebo vypršení i bez běžícího klienta.
+  Pak samostatný worker a outbox tabulka (nový runtime prvek);
+- se ukáže, že služba drží logiku, která patří do domény.
