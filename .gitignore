@@ -16,6 +16,7 @@ LMS.html
 LMS_files/
 swi2.html
 swi2_files/
+SWI_C0*.html
 
 # Editors / local tool settings
 .vscode/

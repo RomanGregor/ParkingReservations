@@ -131,3 +131,78 @@ specifikaci.
 **Commit / tag aplikace:** větev `c02-specification`, aplikace odpovídající
 baseline v0.2 je commit `3aa3a47` (doména `569e723`). Navazuje na `7f21516`
 z C01.
+
+## C03 — Architecture Evidence
+
+Podrobnosti ke všem bodům jsou v `docs/architecture-and-decisions.md`,
+sekce „C03 — Architektura“.
+
+**Baseline:** v0.2
+
+**Part A:** AS-IS nad commitem `bb72a77`. Use-casy skládá GUI (F1),
+atomičnost drží `repository.apply` jen při správném použití (F2), katalog
+míst je v GUI (F3), vypršení jen při obnovení (F4), notifikace chybí (F5),
+role se nerozlišují (F6).
+
+**Drivers:** AD-01 atomické Confirm/Approve (BR-02, REQ-04, REQ-06), AD-02
+odložené schválení a vypršení (REQ-06..08), AD-03 selhání Notification
+Service, AD-04 druhý klient v CP1 (HTTP).
+
+**Decision question:** Kde má být vlastněno provádění přechodů stavu
+`Reservation` včetně hranice transakce, aby BR-02 a statechart v0.2 platily
+stejně pro každého klienta i při odloženém schválení?
+
+**Alternatives:** A — klient skládá use-case a volá `repository.apply`;
+B — aplikační služba `ReservationService` je jediný vstup pro přechody.
+(C — trigger v DB — zavržena v E1.)
+
+**Scenario walkthrough:** Confirm na `VIP-01` → `PENDING_APPROVAL` → konec
+požadavku → souběžné Approve dvou překrývajících se žádostí ve dvou
+instancích, uplynutí `start`, výpadek notifikace. Obě varianty fungují,
+A jen pokud každý klient použije `apply` správně.
+
+**ADR:** ADR-04 — rozhodnuto B. Negativní důsledky: další vrstva, riziko
+přerostlé služby, zámek celé DB, vypršení jen s běžící instancí, notifikace
+bez opakování.
+
+**Views:**
+- domain class — C1
+- context — G1
+- static architecture — G2 (5 prvků, přidělení R1–R8)
+- state ownership — G3 (9 přechodů, vše Reservation Management)
+- runtime/deployment — G4 (1 deployable, N instancí, 1 SQLite soubor)
+- design sequence — H1 (Confirm → později Approve, `alt` kolize)
+- focused design class — H2 (9 tříd/rozhraní)
+
+**Cross-view issues found/resolved:** 3, opraveny v dokumentech před
+změnou kódu: operace `list` v G2 bez vlastníka v H2; vlastník selhání
+notifikace v G2 proti ADR-04; rozsah notifikací v G1/C2 proti H1.
+
+**AS-IS → TO-BE delta:** 7× CHANGE (use-casy, hranice transakce, katalog
+míst, `now`, vypršení, notifikace, testy souběhu), 2× KEEP (zámek SQLite,
+`domain.py`), 2× VERIFY (pravidlo závislostí, doména bez I/O → L2).
+
+**Implementation changes:** commit `1ab853e`. Nové `service.py`,
+`places.py`, `notification.py`; `repository.apply` → `transaction()`; GUI
+volá jen službu a kontroluje vypršení každou minutu.
+
+**Behaviour verification:** 40 testů OK (27 domain, 2 spike, 4 souběh,
+6 služba, 1 architektura). Patří k nim úspěšná cesta, kolize při Approve,
+výpadek notifikace, vypršení a souběžné Approve. Mutace bez zámku shodí
+3 testy souběhu. Scénář je projitý i v běžícím GUI (řízeném skriptem přes jeho tlačítka).
+
+**Architecture conformance rule + result:** Stav `Reservation` mění jen
+Reservation Management. `tests/test_architecture.py` (AST): TO-BE OK,
+AS-IS `bb72a77` 7 porušení, mutace v GUI zachycena.
+
+**Remaining uncertainty / risk:**
+- vypršení i notifikace běží jen, když běží aspoň jedna instance aplikace;
+- notifikace je jen `LogNotifier` bez opakování; při výpadku se ztratí;
+- zámek celé SQLite DB řadí všechny zápisy. Při serverové DB otevřít ADR-04;
+- role (Driver × Facility manager) se neověřují (F6);
+- architektonický test nepozná volání pravidla přes alias importu
+  (`import parking.domain as d`).
+
+**Commit/tag:** větev `c03-architecture`, implementace `1ab853e`,
+architektonický test `3af6de7`, tag `c03` na commitu s touto
+evidencí.
