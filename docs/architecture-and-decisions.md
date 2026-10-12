@@ -608,3 +608,198 @@ nezávisí na I/O ani na jiných modulech `parking`.
   importuje 6 přechodových pravidel a `parking.repository`). Pravidlo tedy
   dřív neplatilo a řádek VERIFY z J by bez změny neprošel;
 - mutace (přiřazení `r.state` v `gui.py`) test shodí.
+
+---
+
+## C05 Detailed Design
+
+Navazuje na C03 (G2, G3, H1, H2, ADR-04). Zůstává uvnitř přijaté hranice
+prvku Reservation Management a architekturu nemění.
+
+Postup (L05), každý krok má svou sekci:
+1. vybrat jednu architektonickou jednotku — DD-1;
+2. odvodit vnitřní odpovědnosti, nejdřív co se rozhoduje, ne třídy — DD-2;
+3. určit vlastníky, stav a kontrakty — DD-3, DD-4;
+4. navrhnout metody (4A) — DD-7, a algoritmus a rozhodovací tabulky
+   (4B) — DD-8; strukturu a interakci ukazují DD-5 a DD-6;
+5. odvodit unit/component testy — `tests/test_detailed_design.py`,
+   `docs/evidence-and-evolution.md` „C05 — Detailed Design Evidence“;
+6. zkontrolovat kód proti návrhu — tamtéž, „Design ↔ implementation
+   mismatch“.
+
+DD-1 až DD-9 vznikly před změnou kódu. Po implementaci jsou názvy a
+signatury zkontrolované proti kódu (evidence C05).
+
+### DD-1 Selected architecture unit
+
+**Jednotka:** *Availability & Confirmation decision* — rozhodnutí, zda
+interval místa koliduje s potvrzenou alokací (BR-01, BR-02), a rozhodnutí
+přechodů `confirm` / `approve`, které alokaci vytvářejí.
+
+**Prvek G2:** Reservation Management, část pravidel v `domain.py`
+(v H2 modul `ReservationRules`). Volá ji `ReservationService`
+(`service.py`), který je pro jednotku hraniční prvek.
+
+**Proč tato jednotka:**
+- má skutečnou rozhodovací logiku: polootevřené intervaly `[start, end)`,
+  blokuje jen `CONFIRMED`, posuzovaná rezervace se vylučuje, confirm se
+  větví podle `requires_approval`, platí časová hranice `start` a záleží na
+  pořadí kontrol;
+- tady vzniká alokace. BR-02, REQ-04 a REQ-06 stojí na správném výsledku
+  této jednotky. C03 rozhodl, *kde* se rozhoduje (ADR-04), C05 řeší, *jak*;
+- leží celá uvnitř jednoho prvku G2 a nemá I/O. Jde ji navrhnout a
+  otestovat bez změny architektury a bez porušení ADR-04;
+- odpovídá vzoru „`AvailabilityPolicy.evaluate(resource, interval,
+  existingReservations)`“ z L05.
+
+Celý *Reservation Lifecycle* jsme nevybrali. `reject`, `cancel` a
+`expire_if_due` jsou kontroly stavu a času bez vlastní rozhodovací logiky.
+Přidaly by objem, ne rozhodnutí.
+
+**Související:** BR-01, BR-02, časová hranice `start` (spec. část A),
+OP-02, OP-03 (v0.2), OP-05, REQ-02, REQ-03 (v0.2), REQ-04, REQ-06; scénář
+H1 z C03 (Confirm na `VIP-01` → později Approve s kolizí). BR-05 (předstih
+1 h) se jednotky netýká. Kontroluje se jen při Create, Confirm a Approve
+hlídají jen `now < start`.
+
+**Hranice:**
+
+| Uvnitř (navrhuje se zde) | Vně (jen rozhraní, nenavrhuje se) |
+|---|---|
+| `evaluate_availability`, `Availability`, `AvailabilityResult` | `ReservationService._transition`: transakce, `now` z hodin, notifikace po commitu (C03, ADR-04) |
+| `is_available` (odpověď OP-02 ano/ne pro `ReservationService.check`) | `ReservationRepository.for_place`, `transaction()` |
+| `Reservation.overlaps`, `Reservation.overlaps_interval` | `PlaceCatalog.find` (dodá `ParkingPlace`) |
+| `confirm`, `approve`, `_require_not_started`, `_require_no_conflict` | `Notifier`, Reservation UI |
+| | `create_reservation`, `reject`, `cancel`, `expire_if_due` (jen v tabulce přechodů DD-8) |
+
+### DD-2 Detailed responsibilities
+
+Co se musí rozhodnout nebo udělat. Bez názvů tříd a funkcí:
+
+| # | Odpovědnost | Zdroj |
+|---|---|---|
+| DR-1 | ověřit, že posuzovaný interval je platný (`end > start`) | BR-01, OP-02 |
+| DR-2 | vyloučit posuzovanou rezervaci ze srovnání: rezervace nekoliduje sama se sebou | OP-03, OP-05; seznam rezervací místa z úložiště obsahuje i ji |
+| DR-3 | vybrat jen rezervace, které místo blokují: stejné místo a stav `CONFIRMED` | BR-02 |
+| DR-4 | rozhodnout překryv dvou intervalů `[start, end)`; navazující intervaly se nepřekrývají | BR-01 |
+| DR-5 | vrátit výsledek i důvod: jaký výsledek a se kterými rezervacemi interval koliduje | OP-02, L05 |
+| DR-6 | přeložit výsledek na odpověď OP-02 ano/ne; neplatný interval odmítnout | REQ-02 |
+| DR-7 | ověřit, že přechod vychází z povoleného stavu: confirm z `DRAFT`, approve z `PENDING_APPROVAL` | statechart v0.2 |
+| DR-8 | odmítnout přechod, když `now >= start` | časová hranice `start`, REQ-03, REQ-06 |
+| DR-9 | při confirm rozhodnout cílový stav podle toho, zda místo vyžaduje schválení; na místě se schválením kontrolu kolize odložit | REQ-03 v0.2 |
+| DR-10 | při vzniku alokace (confirm bez schválení, approve) vynutit BR-02; při kolizi přechod odmítnout a kolizi pojmenovat | REQ-03, REQ-06 |
+| DR-11 | zapsat nový stav, a to až po úspěchu všech kontrol; při jakémkoli selhání nechat stav beze změny | ADR-04, chybové výsledky OP-03/OP-05 |
+| DR-12 | dodat `now`, rezervace místa a místo a vše provést v jedné transakci | ADR-04 (vně jednotky) |
+
+DR-12 je uvedena, aby bylo vidět, co jednotka **nedělá**.
+
+### DD-3 Design elements and ownership
+
+| Odpovědnost | Vlastník (funkce/třída) | Stav / data | Proč zde? | Co nesmí znát |
+|---|---|---|---|---|
+| DR-1, DR-2, DR-3, DR-5 | `evaluate_availability` (čistá funkce) | vlastní stav žádný; čte `place_id`, interval, `existing`, `exclude_id` | jedno místo pro BR-02 společné pro Check, Confirm i Approve (spec. „Availability vs. Confirm“: stejné blokující stavy, stejný překryv) | SQLite, hodiny (`now`), notifikace, `requires_approval`, texty chyb pro uživatele |
+| DR-4 | `Reservation.overlaps_interval` (`Reservation.overlaps` na ni jen deleguje) | `start`, `end` rezervace | interval jsou data `Reservation` (C1 `TimeInterval`); BR-01 je zapsané jednou | stav rezervace, ostatní rezervace |
+| DR-6 | `is_available` | — | zachová rozhraní OP-02 (`bool`) pro `ReservationService.check` | id kolizí (OP-02 odpovídá jen ano/ne) |
+| DR-7, DR-9, DR-11 pro `DRAFT → …` | `confirm` | mění `reservation.state` | přechod je pravidlo domény (G3) | transakci, katalog (dostane hotové `place`), notifikace |
+| DR-7, DR-11 pro `PENDING_APPROVAL → CONFIRMED` | `approve` | mění `reservation.state` | přechod je pravidlo domény (G3) | `requires_approval` (stav `PENDING_APPROVAL` už znamená místo se schválením) |
+| DR-8 | `_require_not_started` | čte `reservation.start`, `now` | jedna hranice pro confirm, approve, reject i cancel (spec. „Časové hranice“) | odkud `now` pochází |
+| DR-10 | `_require_no_conflict` | — | confirm i approve vynucují BR-02 stejně (spec. „REQ-06 vs. BR-02“) a stejně hlásí kolizi | `requires_approval`, čas |
+| DR-12 | `ReservationService._transition` (vně) | transakce, `clock`, `for_place` | ADR-04 | obsah BR-01/BR-02 (pravidla jen volá) |
+
+Každá odpovědnost DR-1 až DR-12 má právě jednoho vlastníka. DR-7 a DR-11
+jsou rozdělené po přechodech, každý přechod má jednu funkci.
+`AvailabilityResult` a `Availability` nejsou vlastníci odpovědnosti. Jsou
+to data, která vrací `evaluate_availability` (DD-4). `ParkingPlace` dodává
+Place Catalog (R5 z C03). Jednotka z něj čte jen `requires_approval`.
+
+### DD-4 Key interface(s) / contract(s)
+
+Názvy výsledků přebírají slovník REQ-02: `AVAILABLE` / `UNAVAILABLE`.
+„Zamítnuto, žádná odpověď“ z OP-02 je `INVALID_INTERVAL`.
+
+```
+<<function>> evaluate_availability                   domain.py, Reservation Management
+
+evaluate_availability(place_id: str, start: datetime, end: datetime,
+                      existing: list[Reservation],
+                      exclude_id: str | None = None) -> AvailabilityResult
+
+Input:     place_id     místo, o kterém se rozhoduje
+           start, end   posuzovaný interval [start, end)
+           existing     rezervace ke srovnání; smí obsahovat jiná místa, všechny stavy
+                        i posuzovanou rezervaci (služba předává for_place)
+           exclude_id   id rezervace, která se ze srovnání vynechá
+Output:    AvailabilityResult(outcome: Availability, conflicts: tuple[str, ...])
+Pre:       všechny datetime (start, end, časy v existing) jsou timezone-aware;
+           v aplikaci UTC (D3, spec. „now = čas serveru v UTC“)
+Post:      outcome == INVALID_INTERVAL  ⇔  end <= start, a pak conflicts == ()
+           conflicts == id těch r z existing (v pořadí existing), pro které platí
+                        r.id != exclude_id ∧ r.place_id == place_id
+                        ∧ r.state == CONFIRMED ∧ r.overlaps_interval(start, end)
+           outcome == UNAVAILABLE       ⇔  end > start ∧ conflicts != ()
+           outcome == AVAILABLE         ⇔  end > start ∧ conflicts == ()
+           existing ani žádná rezervace se nezmění
+Failures:  obchodní výsledek nikdy není výjimka: neplatný interval je INVALID_INTERVAL;
+           porušená Pre (naive × aware datetime) → TypeError z porovnání = chyba volajícího
+Side effects: žádné (bez I/O, bez hodin, bez zápisu)
+```
+
+`conflicts` nese id, ne objekty `Reservation`. Výsledek je neměnná hodnota
+(`frozen` dataclass) a nikdo přes něj nemůže změnit stav rezervace
+(ADR-04).
+
+```
+<<function>> is_available                            odpověď OP-02 pro ReservationService.check
+
+is_available(place_id: str, start: datetime, end: datetime,
+             existing: list[Reservation]) -> bool
+
+Post:      True  ⇔  evaluate_availability(place_id, start, end, existing).outcome == AVAILABLE
+Failures:  end <= start → RuleViolation("end must be after start")   (OP-02: žádná odpověď)
+Side effects: žádné
+```
+
+```
+<<function>> confirm                                 OP-03 (v0.2)
+
+confirm(reservation: Reservation, existing: list[Reservation],
+        place: ParkingPlace, now: datetime) -> None
+
+Pre:       place.id == reservation.place_id (místo z PlaceCatalog)
+           existing = rezervace místa, smí obsahovat i reservation
+           now a časy rezervací jsou timezone-aware
+Post:      place.requires_approval   → reservation.state == PENDING_APPROVAL
+                                       (kolize se nekontroluje, odloženo na approve)
+           ¬place.requires_approval  → reservation.state == CONFIRMED a žádná CONFIRMED
+                                       rezervace z existing (kromě reservation) se nepřekrývá
+Failures:  RuleViolation, reservation.state beze změny; první platná v tomto pořadí:
+           1. state != DRAFT            "cannot confirm a <STATE> reservation"
+           2. now >= reservation.start  "cannot confirm a reservation that has already started"
+           3. end <= start              "end must be after start"            (jen bez schválení)
+           4. kolize s CONFIRMED        "... must not overlap; conflicts with <id>, ..."
+                                                                             (jen bez schválení)
+Side effects: mění jen reservation.state; neukládá, nenotifikuje
+```
+
+```
+<<function>> approve                                 OP-05, REQ-06
+
+approve(reservation: Reservation, existing: list[Reservation], now: datetime) -> None
+
+Pre:       jako confirm (bez place)
+Post:      reservation.state == CONFIRMED a žádná CONFIRMED rezervace z existing
+           (kromě reservation) se nepřekrývá
+Failures:  RuleViolation, reservation.state beze změny; první platná v tomto pořadí:
+           1. state != PENDING_APPROVAL "cannot approve a <STATE> reservation"
+           2. now >= reservation.start  "cannot approve a reservation that has already started"
+           3. end <= start              "end must be after start"
+           4. kolize s CONFIRMED        "... must not overlap; conflicts with <id>, ..."
+Side effects: mění jen reservation.state
+```
+
+**Kolaborace s hraničním prvkem** (vně jednotky, beze změny z C03):
+`ReservationService._transition` předá `for_place(r.place_id)` (obsahuje
+i `r`, proto `exclude_id`) a `now` ze svých hodin. Při `RuleViolation`
+`transaction()` provede rollback a notifikace se nepošle. Jednotka
+navíc zaručuje, že při selhání stav nezmění ani v paměti. Na rollbacku
+tak nezávisí.
