@@ -45,6 +45,7 @@ run.py                          # launches the GUI
 src/parking/                    # service (state changes), domain rules, place catalog,
                                 # persistence, notification stub, tkinter GUI
 tests/                          # unit, service, concurrency and architecture tests
+  test_detailed_design.py       # C05: unit/component tests derived from the detailed design
 ```
 
 ## CP1 walking skeleton
