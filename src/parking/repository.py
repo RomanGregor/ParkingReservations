@@ -2,8 +2,9 @@
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
+from typing import Callable
 
-from parking.domain import Reservation, State
+from parking.domain import Reservation, RuleViolation, State
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reservation (
