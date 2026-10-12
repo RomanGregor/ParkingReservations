@@ -49,12 +49,25 @@ class Reservation:
     id: str = field(default_factory=lambda: uuid4().hex)
 
     def overlaps(self, other: "Reservation") -> bool:
-        # BR-01: intervals use [start, end) semantics.
-        return (
-            self.place_id == other.place_id
-            and self.start < other.end
-            and other.start < self.end
-        )
+        return self.place_id == other.place_id and self.overlaps_interval(other.start, other.end)
+
+    def overlaps_interval(self, start: datetime, end: datetime) -> bool:
+        # BR-01: intervals use [start, end) semantics; touching intervals do not overlap.
+        return self.start < end and start < self.end
+
+
+class Availability(str, Enum):
+    """OP-02 outcome. AVAILABLE / UNAVAILABLE follow REQ-02; INVALID_INTERVAL
+    is the "rejected, no answer" case (end <= start)."""
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    INVALID_INTERVAL = "INVALID_INTERVAL"
+
+
+@dataclass(frozen=True)
+class AvailabilityResult:
+    outcome: Availability
+    conflicts: tuple[str, ...] = ()  # ids of the overlapping CONFIRMED reservations, in `existing` order
 
 
 def create_reservation(place: ParkingPlace, user: User, start: datetime, end: datetime, now: datetime) -> Reservation:
@@ -73,19 +86,50 @@ def create_reservation(place: ParkingPlace, user: User, start: datetime, end: da
     return Reservation(place.id, user.id, start, end)
 
 
-def is_available(place_id: str, start: datetime, end: datetime, existing: list[Reservation]) -> bool:
-    """OP-02 Check Availability. BR-02: only CONFIRMED reservations block a
-    place; a PENDING_APPROVAL request is not yet a committed allocation and
-    must not make the place look unavailable to other users."""
+def evaluate_availability(place_id: str, start: datetime, end: datetime, existing: list[Reservation],
+                          exclude_id: str | None = None) -> AvailabilityResult:
+    """OP-02 decision shared by Check, Confirm and Approve (C05 DD-4).
+
+    BR-02: only CONFIRMED reservations of the same place block it; a
+    PENDING_APPROVAL request is not yet a committed allocation and must not
+    make the place look unavailable to other users. `exclude_id` leaves the
+    reservation being decided out, so `existing` may be all reservations of
+    the place including that one. An invalid interval is an outcome, not an
+    exception; the caller decides how to report it.
+    """
     if end <= start:
+        return AvailabilityResult(Availability.INVALID_INTERVAL)
+    conflicts = tuple(
+        r.id for r in existing
+        if r.id != exclude_id and r.place_id == place_id
+        and r.state == State.CONFIRMED and r.overlaps_interval(start, end)
+    )
+    return AvailabilityResult(Availability.UNAVAILABLE if conflicts else Availability.AVAILABLE, conflicts)
+
+
+def is_available(place_id: str, start: datetime, end: datetime, existing: list[Reservation]) -> bool:
+    """OP-02 Check Availability as the yes/no answer of REQ-02. An invalid
+    interval gets no answer: it is rejected."""
+    result = evaluate_availability(place_id, start, end, existing)
+    if result.outcome == Availability.INVALID_INTERVAL:
         raise RuleViolation("end must be after start")
-    probe = Reservation(place_id, "", start, end)
-    return not any(r.state == State.CONFIRMED and r.overlaps(probe) for r in existing)
+    return result.outcome == Availability.AVAILABLE
 
 
 def _require_not_started(reservation: Reservation, now: datetime, action: str) -> None:
     if now >= reservation.start:
         raise RuleViolation(f"cannot {action} a reservation that has already started")
+
+
+def _require_no_conflict(reservation: Reservation, existing: list[Reservation]) -> None:
+    """BR-02 at the moment an allocation is committed (confirm, approve)."""
+    result = evaluate_availability(reservation.place_id, reservation.start, reservation.end,
+                                   existing, exclude_id=reservation.id)
+    if result.outcome == Availability.INVALID_INTERVAL:
+        raise RuleViolation("end must be after start")
+    if result.outcome == Availability.UNAVAILABLE:
+        raise RuleViolation("confirmed reservations for the same place must not overlap; "
+                            f"conflicts with {', '.join(result.conflicts)}")
 
 
 def confirm(reservation: Reservation, existing: list[Reservation], place: ParkingPlace, now: datetime) -> None:
@@ -102,9 +146,7 @@ def confirm(reservation: Reservation, existing: list[Reservation], place: Parkin
     if place.requires_approval:
         reservation.state = State.PENDING_APPROVAL
         return
-    others = [r for r in existing if r.id != reservation.id]
-    if not is_available(reservation.place_id, reservation.start, reservation.end, others):
-        raise RuleViolation("confirmed reservations for the same place must not overlap")
+    _require_no_conflict(reservation, existing)
     reservation.state = State.CONFIRMED
 
 
@@ -115,9 +157,7 @@ def approve(reservation: Reservation, existing: list[Reservation], now: datetime
     if reservation.state != State.PENDING_APPROVAL:
         raise RuleViolation(f"cannot approve a {reservation.state.value} reservation")
     _require_not_started(reservation, now, "approve")
-    others = [r for r in existing if r.id != reservation.id]
-    if not is_available(reservation.place_id, reservation.start, reservation.end, others):
-        raise RuleViolation("confirmed reservations for the same place must not overlap")
+    _require_no_conflict(reservation, existing)
     reservation.state = State.CONFIRMED
 
 
