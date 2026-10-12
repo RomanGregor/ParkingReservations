@@ -748,6 +748,13 @@ Side effects: žádné (bez I/O, bez hodin, bez zápisu)
 (`frozen` dataclass) a nikdo přes něj nemůže změnit stav rezervace
 (ADR-04).
 
+Vyloučení podle `exclude_id` (DR-2) a filtr místa (DR-3) jsou záruky
+kontraktu, dnes je služba nepotřebuje. `for_place` vrací jen jedno místo a
+uložená kopie posuzované rezervace je při confirm `DRAFT` a při approve
+`PENDING_APPROVAL`, takže neblokuje. Bez těchto filtrů by výsledek
+záležel na tom, co volající do `existing` vloží. Doplněno po kontrole
+kódu (evidence C05, mutace M3 a M4).
+
 ```
 <<function>> is_available                            odpověď OP-02 pro ReservationService.check
 

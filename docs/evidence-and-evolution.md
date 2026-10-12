@@ -206,3 +206,147 @@ AS-IS `bb72a77` 7 porušení, mutace v GUI zachycena.
 **Commit/tag:** větev `c03-architecture`, implementace `1ab853e`,
 architektonický test `3af6de7`, tag `c03` na commitu s touto
 evidencí.
+
+## C05 — Detailed Design Evidence
+
+Detailní návrh je v `docs/architecture-and-decisions.md`, sekce
+„C05 Detailed Design“ (DD-1 až DD-9). Řetěz: Reservation Management (G2)
+→ DD-1..DD-9 → `domain.py` (`bbe817b`) → `tests/test_detailed_design.py`
+(`91a9ed1`).
+
+**Selected unit:** *Availability & Confirmation decision* uvnitř
+Reservation Management: `evaluate_availability`, `is_available`,
+`Reservation.overlaps(_interval)`, `confirm`, `approve`,
+`_require_not_started`, `_require_no_conflict` (DD-1). Hraniční prvek je
+`ReservationService`. Architektura ani ADR-04 se nemění.
+
+**Návrhová změna (DD-4):** dostupnost vrací výsledek a důvod
+(`AvailabilityResult(outcome, conflicts)`, `Availability.AVAILABLE |
+UNAVAILABLE | INVALID_INTERVAL`) místo `bool`. `confirm` a `approve`
+hlásí v `RuleViolation` id kolidujících rezervací. `is_available` zůstává
+odpovědí OP-02 ano/ne.
+
+### Tests derived from DD
+
+Unit = čisté funkce `domain.py`. Component = `ReservationService` se
+skutečným `ReservationRepository` nad dočasnou SQLite. Integration =
+souběh dvou spojení nad jedním souborem.
+
+| DD rozhodnutí / DT-x | Test (`tests/test_detailed_design.py`, není-li uvedeno jinak) | Úroveň |
+|---|---|---|
+| DT-A1 navazuje zleva | `DTAvailability.test_DT_A1_touching_on_the_left_is_available` | unit |
+| DT-A2 navazuje zprava | `DTAvailability.test_DT_A2_touching_on_the_right_is_available`; dotaz 09:00–10:00 v `DDServiceCollaboration.test_DT_A8_only_confirmed_rows_in_the_store_block_check` | unit, component |
+| DT-A3 částečný překryv | `DTAvailability.test_DT_A3_partial_overlap_is_unavailable` | unit |
+| DT-A4 dotaz uvnitř | `DTAvailability.test_DT_A4_query_inside_is_unavailable` | unit |
+| DT-A5 dotaz obsahuje | `DTAvailability.test_DT_A5_query_containing_is_unavailable` | unit |
+| DT-A6 shodný interval | `DTAvailability.test_DT_A6_same_interval_is_unavailable` | unit |
+| DT-A7 jiné místo | `DTAvailability.test_DT_A7_confirmed_on_another_place_does_not_block` | unit |
+| DT-A8 blokuje jen `CONFIRMED` | `DTAvailability.test_DT_A8_only_confirmed_blocks` (5 stavů jako `subTest`); `DDServiceCollaboration.test_DT_A8_only_confirmed_rows_in_the_store_block_check` (`DRAFT` a `CANCELLED` v DB) | unit, component |
+| DT-A9 / DR-2 vyloučení sebe sama | `DTAvailability.test_DT_A9_excluded_reservation_does_not_block_itself`; `DTConfirm.test_DR2_stored_copy_of_itself_does_not_block` | unit |
+| DT-A10 všechny kolize v pořadí `existing` | `DTAvailability.test_DT_A10_all_conflicts_in_existing_order` | unit |
+| DT-A11 neplatný interval | `DTAvailability.test_DT_A11_invalid_interval_is_an_outcome_before_any_comparison`, `DD4IsAvailable.test_DT_A11_invalid_interval_gets_no_answer`, `DTConfirm.test_DT_A11_…`, `DTApprove.test_DT_A11_…`; `DDServiceCollaboration.test_DT_A11_check_rejects_an_invalid_interval` | unit, component |
+| DT-A12 prázdné `existing` | `DTAvailability.test_DT_A12_no_reservations_is_available` | unit |
+| DD-4 Post, BR-01 pro všechny polohy intervalů | `DTAvailability.test_DD4_BR01_matches_a_shared_hour_on_a_grid` (100 dvojic intervalů proti nezávislému orákulu „sdílí hodinový slot“) | unit |
+| DD-4 Post: `existing` beze změny, výsledek je neměnná hodnota | `DTAvailability.test_DD4_existing_reservations_are_not_changed`, `test_DD4_result_is_an_immutable_value` | unit |
+| DD-4 Pre: aware datetime, porušení = `TypeError`, stav beze změny | `DTAvailability.test_DD4_naive_datetime_violates_the_precondition`, `DTConfirm.test_DD4_naive_now_violates_the_precondition_and_changes_nothing` | unit |
+| DR-6 `is_available` = `AVAILABLE` | `DD4IsAvailable.test_DD4_available_is_true_unavailable_is_false` | unit |
+| DT-C1 confirm, volné místo | `DTConfirm.test_DT_C1_free_place_confirms`; `DDServiceCollaboration.test_DT_C1_for_place_contains_the_reservation_itself_and_confirm_still_succeeds` | unit, component |
+| DT-C2 kolize pojmenovaná, zůstává `DRAFT` | `DTConfirm.test_DT_C2_conflict_is_named_and_draft_stays` | unit |
+| DT-C3 místo se schválením | `DTConfirm.test_DT_C3_approval_place_goes_pending` | unit |
+| DT-C4 kolize odložena na approve | `DTConfirm.test_DT_C4_approval_place_defers_the_conflict_check`; `DDServiceCollaboration.test_DT_C4_DT_P2_conflict_is_deferred_to_approve_and_named_there` | unit, component |
+| DT-C5 + DD-8 čas před kolizí | `DTConfirm.test_DT_C5_at_or_after_start_is_too_late_even_with_a_conflict` (`now == start` i po něm, obě místa) | unit |
+| DT-C6 + DD-8 stav před časem | `DTConfirm.test_DT_C6_only_draft_can_be_confirmed_and_state_is_checked_first` (5 stavů × před/po `start`) | unit |
+| DT-P1 jiné žádosti neblokují | `DTApprove.test_DT_P1_no_confirmed_conflict_confirms_other_requests_do_not_block` | unit |
+| DT-P2 všechny kolize pojmenované, zůstává `PENDING_APPROVAL` | `DTApprove.test_DT_P2_every_conflict_is_named_and_request_stays_pending`; `DDServiceCollaboration.test_DT_C4_DT_P2_…` (stav v DB, rollback, bez notifikace) | unit, component |
+| DT-P3 po `start` | `DTApprove.test_DT_P3_at_or_after_start_is_too_late_even_with_a_conflict` | unit |
+| DT-P4 + DD-8 stav před časem | `DTApprove.test_DT_P4_only_pending_approval_can_be_approved_and_state_is_checked_first` | unit |
+| REQ-04, REQ-06: pravidlo + zámek SQLite při souběhu | `tests/test_concurrency.py` (4 testy, beze změny z C03) | integration |
+
+### Unit/component tests executed
+
+Příkaz: `PYTHONPATH=src python -m unittest discover -s tests -v`
+(PowerShell: `$env:PYTHONPATH="src"; python -m unittest discover -s tests -v`).
+
+- celkem **76 testů, OK**: 40 z C03 beze změny (27 `test_domain`,
+  2 `test_persistence_spike`, 4 `test_concurrency`, 6 `test_service`,
+  1 `test_architecture`) + **36 nových** v `test_detailed_design`
+  (32 unit, 4 component);
+- `test_architecture` (ADR-04) projde i po změně `domain.py`. Nové typy
+  i funkce jsou v `domain.py` a žádný import nepřibyl.
+
+```
+$ PYTHONPATH=src python -m unittest discover -s tests
+............................................................................
+----------------------------------------------------------------------
+Ran 76 tests in 1.300s
+
+OK
+```
+
+**Mutace** (vždy jedna změna v `domain.py`, spuštěna celá sada, soubor
+vrácen, `git status` čistý):
+
+| # | Mutace (rozbité rozhodnutí DD) | Selhalo testů | Z toho nové (`test_detailed_design`) |
+|---|---|---|---|
+| M1 | `overlaps_interval`: `<` → `<=` (DT-A1, DT-A2) | 8 | 5 |
+| M2 | filtr bez `State.CONFIRMED` (DT-A8, DT-P1) | 9 | 4 (+ 2 souběh, 2 domain, 1 service) |
+| M3 | filtr bez `exclude_id` (DR-2, DT-A9) | 2 | 2 — **jen nové testy** |
+| M4 | filtr bez `place_id` (DT-A7) | 1 | 1 — **jen nový test** |
+| M5 | confirm kontroluje kolizi před větví `requires_approval` (DT-C4) | 3 | 2 |
+| M6 | confirm kontroluje čas před stavem (DD-8, DT-C6) | 1 | 1 — **jen nový test** |
+| M7 | hranice `now >= start` → `now > start` (DT-C5, DT-P3) | 5 | 2 |
+| M8 | `evaluate_availability` bez kontroly `end <= start` (DT-A11) | 6 | 5 |
+| M9 | `RuleViolation` bez id kolizí, tj. chování z C03 (DT-C2, DT-P2) | 3 | 3 — **jen nové testy** |
+
+Každou mutaci zachytí aspoň jeden test odvozený z DD. M3, M4, M6 a M9
+by bez C05 testů prošly, protože C03 sada tato rozhodnutí neověřovala.
+
+### Design ↔ implementation mismatch
+
+Kontrola rozhodnutí DD-1..DD-9 proti kódu (review, testy, mutace).
+Kód se upravoval směrem k návrhu. Návrh jsme upravili jen tam, kde
+popisuje skutečné a zdůvodněné chování, nikdy ne podle chybného kódu.
+
+| DD rozhodnutí | Doklad (test / review / mutace) | Výsledek | Akce (keep / update design / update code) |
+|---|---|---|---|
+| DD-4 výsledek nese důvod (DR-5, DR-10) | review C03: `is_available` vracel jen `bool`, `confirm`/`approve` hlásily kolizi bez id; M9 | nesoulad | **update code** `bbe817b`: `evaluate_availability`, `AvailabilityResult`, `_require_no_conflict` s id ve zprávě |
+| DD-3/DD-4 vstupem je interval, ne rezervace (DR-4) | review: `is_available` tvořil pomocnou `Reservation(place_id, "", start, end)` s novým `uuid` jen kvůli `overlaps` | nesoulad (falešná rezervace bez uživatele) | **update code** `bbe817b`: `Reservation.overlaps_interval`, `overlaps` na ni deleguje |
+| DD-3 BR-02 při vzniku alokace má jednoho vlastníka (DR-10) | review: `confirm` i `approve` měly vlastní kopii filtru `others` a volání `is_available` | duplicita | **update code** `bbe817b`: obě volají `_require_no_conflict` s `exclude_id` |
+| DD-4 Pre: datetime jsou timezone-aware | `test_DD4_naive_*` (2 testy): `TypeError`, stav beze změny | kód tak funguje, C02/C03 to neříkaly | **update design** (DD-4 Pre a Failures, `2764ac8`), **keep code**: smíchání naive a aware je chyba volajícího, ne porušení pravidla, a uživatel ji nemá dostat jako `RuleViolation` |
+| DR-2 vyloučení sebe sama, DR-3 filtr místa | M3 a M4 chytí jen nové unit testy (DT-A9, DR-2, DT-A7), žádný test služby | v tocích služby jsou filtry jen obranné: `for_place` vrací jedno místo, vlastní kopie je `DRAFT` / `PENDING_APPROVAL` | **update design** (odstavec v DD-4, commit s touto evidencí), **keep code**: kontrakt nesmí záviset na tom, co volající do `existing` dá |
+| DT-C4 confirm na místě se schválením nekontroluje kolizi | DT-C4 (unit i component), M5 | soulad, dřív jen v docstringu a REQ-03 v0.2 | **keep**, teď explicitně v DD-8 |
+| DD-8 pořadí kontrol stav → čas → schválení → kolize | DT-C5, DT-C6, DT-P3, DT-P4; M6 chytí jen DT-C6 | soulad | **keep** |
+| DD-4 Pre `place.id == reservation.place_id` | review `confirm` | kód ji nevynucuje | **keep**: jediný volající je `ReservationService` (ADR-04, hlídá `test_architecture`) a místo bere z katalogu podle `r.place_id` |
+| DD-4 neplatný interval: `evaluate_availability` vrací hodnotu, ostatní odmítají | `test_invalid_interval_is_rejected` (C02), DT-A11 (5 testů), M8 | soulad | **keep** |
+| DT-A1..A12, DT-C1..C6, DT-P1..P4 | 36 testů OK | soulad po změně kódu | **keep** |
+| `expire_if_due` vrací `bool`, `ReservationService.expire_due` ho nečte | review `service.py` | mimo hranici DD-1 | **keep**: služba po přechodu filtruje podle stavu, protože o žádosti mohla mezitím rozhodnout jiná instance (C03). `bool` čte `test_domain` |
+| H2 (C03) nezná `evaluate_availability` | review | H2 je pohled C03, DD-5 je zoom do stejného modulu | **keep** H2, DD-5 na něj odkazuje |
+
+### Remaining design risk
+
+- **Lineární průchod uvnitř zámku.** `for_place` vrací rezervace místa ve
+  všech stavech včetně historie a `DRAFT`, které po `start` zůstávají
+  navždy. S historií roste doba, po kterou transakce drží zámek celé
+  SQLite (ADR-04). Zmírnění by bylo filtrovat v SQL podle stavu a
+  intervalu, tím by se ale část BR-02 přesunula do Reservation Store.
+  Otevřít s ADR-04.
+- **Časová zóna jen jako precondition.** HTTP adaptér z CP1 musí převést
+  vstup na aware UTC. Jinak dostane klient `TypeError` (chyba 500) místo
+  chyby pravidla.
+- **`approve` neověřuje `requires_approval` znovu.** Když se katalog změní
+  mezi confirm a approve, rozhoduje stav žádosti, ne aktuální místo.
+- **Hláška kolize obsahuje id cizí rezervace.** Dnes GUI ukazuje všechny
+  rezervace. Až budou role (F6), je potřeba rozhodnout, co smí Driver
+  vidět.
+- **Role se neověřují (F6).** `approve` může vyvolat kdokoli.
+- **Rozsah příkladů.** Dostupnost je ověřená tabulkou DT-A a hodinovou
+  mřížkou (všechny vzájemné polohy dvou intervalů). Hranice pod minutu
+  (sekundy, mikrosekundy) zvlášť testované nejsou. Pravidlo je ale jen
+  porovnání `datetime`, takže na přesnosti nezávisí.
+
+### Commit/tag
+
+Větev `c05-detailed-design` (z `c03-architecture`). DD před kódem:
+`2764ac8` (DD-1..DD-4), `a2f10de` (DD-5..DD-9). Implementace `bbe817b`,
+testy `91a9ed1`. Tag `c05` na commitu s touto evidencí (obsahuje i
+doplnění DD-4 z kontroly kódu). Nic není pushnuté.
