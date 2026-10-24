@@ -2,9 +2,8 @@
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Callable
 
-from parking.domain import Reservation, RuleViolation, State
+from parking.domain import Reservation, State
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reservation (
@@ -18,11 +17,18 @@ CREATE TABLE IF NOT EXISTS reservation (
 """
 
 
+LOCK_TIMEOUT = 5.0  # seconds; the sqlite3 default, measured in C04
+
+
+class StoreBusy(Exception):
+    """The write lock was not obtained within LOCK_TIMEOUT; nothing was changed."""
+
+
 class ReservationRepository:
-    def __init__(self, path: str):
+    def __init__(self, path: str, lock_timeout: float = LOCK_TIMEOUT):
         # Autocommit mode: single statements commit on their own and
         # `transaction` opens its transactions explicitly.
-        self._db = sqlite3.connect(path, isolation_level=None)
+        self._db = sqlite3.connect(path, isolation_level=None, timeout=lock_timeout)
         self._db.execute(_SCHEMA)
 
     def close(self) -> None:
@@ -42,9 +48,14 @@ class ReservationRepository:
         BEGIN IMMEDIATE takes the SQLite write lock before anything is read,
         so another connection cannot slip its own write between the caller's
         rule check and its write. ReservationService decides what runs inside;
-        the repository does not take rules.
+        the repository does not take rules. If another connection holds the
+        lock longer than the timeout, StoreBusy is raised before anything is
+        read (C04).
         """
-        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as e:
+            raise StoreBusy("the reservation store is busy, try again") from e
         try:
             yield
         except BaseException:

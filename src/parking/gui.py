@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from tkinter import messagebox, ttk
 
 from parking.domain import ParkingPlace, RuleViolation, User
-from parking.service import ReservationService, open_service
+from parking.service import ReservationService, StoreBusy, open_service
 
 FMT = "%Y-%m-%d %H:%M"
 EXPIRY_CHECK_MS = 60_000  # REQ-08: look for due PENDING_APPROVAL requests every minute
@@ -25,7 +25,8 @@ class App(tk.Tk):
         form.grid(row=0, column=0, sticky="ew")
         self.place = tk.StringVar(value=self.places[0].label)
         self.user = tk.StringVar()
-        default_start = datetime.now() + timedelta(hours=2)
+        # The form fields are UTC, like `now` in the service (spec, D3).
+        default_start = datetime.now(timezone.utc) + timedelta(hours=2)
         default_end = default_start + timedelta(hours=2)
         self.start = tk.StringVar(value=default_start.strftime(FMT))
         self.end = tk.StringVar(value=default_end.strftime(FMT))
@@ -78,6 +79,8 @@ class App(tk.Tk):
             action()
         except (RuleViolation, ValueError) as e:
             messagebox.showerror("Not allowed", str(e))
+        except StoreBusy as e:  # C04: another instance held the write lock too long
+            messagebox.showwarning("Busy", str(e))
         self.refresh()
 
     def _tick(self):

@@ -128,7 +128,8 @@ specifikaci.
 - **AD-02:** schvalování a vypršení v čase. Vypršení se teď kontroluje jen
   při obnovení GUI. Chybí časovač a napojení na Notification Service z C01.
 
-**Commit / tag aplikace:** větev `c02-specification`, aplikace odpovídající
+**Commit / tag aplikace:** větev `c02-specification` (commity jsou v historii
+`main`), aplikace odpovídající
 baseline v0.2 je commit `3aa3a47` (doména `569e723`). Navazuje na `7f21516`
 z C01.
 
@@ -206,6 +207,98 @@ AS-IS `bb72a77` 7 porušení, mutace v GUI zachycena.
 **Commit/tag:** větev `c03-architecture`, implementace `1ab853e`,
 architektonický test `3af6de7`, tag `c03` na commitu s touto
 evidencí.
+
+## C04 — Quality & Measurement
+
+Doplněno 2026-10-24 před C06, tedy po C05. Kód měření i výsledky jsou
+v tomto commitu.
+
+**Quality concern:** časové chování (ISO 25010 *performance efficiency /
+time behaviour*) operace Confirm. ADR-04 řadí všechny zápisy přes zámek
+celé SQLite (`BEGIN IMMEDIATE`). Uvnitř zámku `for_place` načte a
+`evaluate_availability` projde všechny rezervace místa včetně historie
+(riziko C05 „Lineární průchod uvnitř zámku“). Doba Confirm je tedy
+i doba, po kterou čeká druhá instance (G4). Pokud čeká déle než timeout
+zámku, její operace selže.
+
+**Deklarovaný kontext:**
+- 5 míst z `PlaceCatalog`, jeden soubor `parking.db` na lokálním disku;
+- historie: **10 000 minulých rezervací na místo** (50 000 řádků). Je to
+  předpoklad, ne data (Unknown z C01): nejvýš 4 rezervace na místo a den
+  včetně nikdy nepotvrzených `DRAFT` ≈ 1 000 za rok, tedy zhruba 10 let
+  bez úklidu. Stavy historie jsou smíšené (`CONFIRMED`, `CANCELLED`,
+  `DRAFT`, `EXPIRED`);
+- 1 instance (QC-1) a 2 instance, které potvrzují souběžně bez pauzy
+  (QC-2). QC-2 je zátěžový horní odhad, ne běžné klikání v GUI.
+
+**Evaluable criteria:**
+
+| ID | Criterion | Zdroj hranice |
+|---|---|---|
+| QC-1 | p95 doby `ReservationService.confirm` ≤ **100 ms** pro 1 instanci a 10 000 rezervací/místo (200 potvrzení) | 0,1 s je hranice, kdy uživatel vnímá odezvu jako okamžitou (J. Nielsen, *Response Times: The 3 Important Limits*). Stejně dlouho čeká druhá instance na zámek. |
+| QC-2 | **0** potvrzení selže na zámku ze 400 (2 instance × 200 v řadě, 10 000 rezervací/místo) | timeout zámku 5 s (výchozí `sqlite3.connect`, `LOCK_TIMEOUT` v `repository.py`). Kdo čeká déle, operace selže. |
+
+**Measurement:** `measurements/confirm_latency.py` (jen standardní
+knihovna). Pro každou velikost historie vytvoří nový SQLite soubor, naplní
+historii a měří `perf_counter` kolem `service.confirm` na nových `DRAFT`.
+Notifier nic nedělá, takže čas je čtení, pravidlo, zápis a `COMMIT`
+v zámku, u 2 instancí navíc čekání na zámek. Volba `--index` měří
+alternativu s indexem na `place_id` (jen v testovací DB).
+
+```
+$ PYTHONPATH=src python3 measurements/confirm_latency.py --history 100 1000 10000 50000
+Python 3.12.3, SQLite 3.45.1, Linux x86_64, 16 CPUs; runs=200, index on place_id: no
+history/place  rows   solo p50  solo p95  solo max  2-inst p95  2-inst max  lock errors  confirmed
+          100    500    5.62 ms   6.97 ms   7.66 ms     8.99 ms   737.24 ms            0  400/400
+         1000   5000   11.19 ms  12.60 ms  17.98 ms    13.92 ms  1143.71 ms            0  400/400
+        10000  50000   70.83 ms  80.33 ms  96.50 ms    80.97 ms  2705.80 ms            1  399/400
+        50000  250000  140.86 ms 375.42 ms 411.69 ms   381.13 ms  3579.79 ms            3  397/400
+
+$ PYTHONPATH=src python3 measurements/confirm_latency.py --index --history 10000
+        10000  50000   66.61 ms  72.89 ms  81.02 ms    77.58 ms  2209.65 ms            1  399/400
+```
+
+Řádek 10 000 bez indexu je opakovaný 4× (p95 solo 78–80 ms, vždy 1 chyba
+zámku ze 400). Chyba je `database is locked` po 5,0 s.
+
+**Výsledek:**
+
+| Criterion | Naměřeno (10 000/místo) | Výsledek |
+|---|---|---|
+| QC-1 p95 ≤ 100 ms | 77–80 ms | **splněno** (rezerva malá; při 50 000/místo 375 ms) |
+| QC-2 0 chyb zámku | 1 ze 400 v každém běhu | **nesplněno**; při ≤ 1 000/místo 0 chyb |
+
+Co měření ukázalo navíc:
+- čas roste s počtem rezervací místa, ne s SQL dotazem. Index na
+  `place_id` zlepší p95 jen o 3–10 % a chyby zámku nezmění. Většinu času
+  stojí převod řádků na `Reservation` a průchod v Pythonu;
+- chyby u QC-2 nejsou dlouhé jednotlivé transakce (p95 81 ms). Je to
+  nespravedlivé čekání na zámek SQLite: držitel zámek uvolní a hned ho
+  znovu vezme, čekající mezitím spí v busy handleru. Nejdelší čekání roste
+  s délkou transakce (0,7 s → 1,1 s → 2,7 s) a jedno z 400 přeleze 5 s;
+- před C04 byla tahle chyba `sqlite3.OperationalError`, kterou GUI
+  nechytalo (`_guard` chytal jen `RuleViolation` a `ValueError`).
+  Uživatel nedostal hlášku. Stav zůstal správně beze změny.
+
+**Trade-off / decision** (D4 v `docs/architecture-and-decisions.md`):
+- **ADR-04 se nemění, index se nepřidává.** QC-1 platí a index nemění ani
+  jedno kritérium, jen přidá schéma.
+- **Nesplněné QC-2 přijímáme pro deklarovaný horní odhad.** Nastává až při
+  10 000 rezervacích na místo a nepřetržitém souběhu dvou instancí. Do
+  1 000 rezervací na místo (zhruba první rok podle předpokladu výše) platí
+  obě kritéria.
+- **Selhání zámku je teď definovaný výsledek:** `transaction()` vyhodí
+  `StoreBusy`, nic se nezměnilo a GUI ukáže „try again“. Týká se i Create,
+  který teď zapisuje přes `transaction()`. Test
+  `test_concurrency.test_lock_timeout_is_store_busy_and_changes_nothing`;
+  když překlad chyby odstraníme, test selže.
+- **Spouštěč pro znovuotevření ADR-04:** víc než 1 000 rezervací na místo
+  (poslední naměřený bod, kde QC-2 platí). Pak úklid historie nebo filtr
+  v SQL podle stavu a intervalu.
+
+**Zbývající mezery:** měřeno jen na jednom vývojovém stroji (Linux, lokální
+SSD). Windows ani síťový disk měřeny nejsou. Historie je syntetická a
+objem je předpoklad, ne údaj provozu.
 
 ## C05 — Detailed Design Evidence
 
@@ -329,7 +422,8 @@ popisuje skutečné a zdůvodněné chování, nikdy ne podle chybného kódu.
   navždy. S historií roste doba, po kterou transakce drží zámek celé
   SQLite (ADR-04). Zmírnění by bylo filtrovat v SQL podle stavu a
   intervalu, tím by se ale část BR-02 přesunula do Reservation Store.
-  Otevřít s ADR-04.
+  Otevřít s ADR-04. Změřeno v C04 (QC-1, QC-2), spouštěč je víc než
+  1 000 rezervací na místo.
 - **Časová zóna jen jako precondition.** HTTP adaptér z CP1 musí převést
   vstup na aware UTC. Jinak dostane klient `TypeError` (chyba 500) místo
   chyby pravidla.
@@ -348,5 +442,5 @@ popisuje skutečné a zdůvodněné chování, nikdy ne podle chybného kódu.
 
 Větev `c05-detailed-design` (z `c03-architecture`). DD před kódem:
 `2764ac8` (DD-1..DD-4), `a2f10de` (DD-5..DD-9). Implementace `bbe817b`,
-testy `91a9ed1`. Tag `c05` na commitu s touto evidencí (obsahuje i
-doplnění DD-4 z kontroly kódu). Nic není pushnuté.
+testy `91a9ed1`. Evidence a doplnění DD-4 z kontroly kódu `29d9382`
+(tag `c05`). Sloučeno do `main` přes PR #7 (`5ba2b09`).

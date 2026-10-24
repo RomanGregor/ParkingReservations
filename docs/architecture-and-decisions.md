@@ -39,6 +39,15 @@ SQLite has no datetime type. The C01 spike (`docs/evidence-and-evolution.md`)
 showed that `isoformat()` / `fromisoformat()` round-trips timezone-aware
 datetimes losslessly, so no custom adapters are used.
 
+### D4 – Lock timeout is an explicit outcome; no index (C04)
+Measured in C04 (`docs/evidence-and-evolution.md`, QC-1, QC-2): Confirm with
+10 000 past reservations per place has p95 ≈ 80 ms, an index on `place_id`
+changes that by under 10 %. With two instances confirming non-stop, 1 of 400
+confirms waits more than the 5 s lock timeout. Decision: keep ADR-04 and the
+schema; `transaction()` turns the timeout into `StoreBusy` (nothing changed,
+GUI says "try again"), and every write, Create included, goes through
+`transaction()`. Revisit with ADR-04 above 1 000 reservations per place.
+
 ---
 
 # C03 — Architektura
@@ -285,7 +294,8 @@ jedno definované místo mimo transakci.
   (Unknown z C01). Pak řešit zamykání po místech místo celé DB;
 - bude vyžadováno doručení notifikace nebo vypršení i bez běžícího klienta.
   Pak samostatný worker a outbox tabulka (nový runtime prvek);
-- se ukáže, že služba drží logiku, která patří do domény.
+- se ukáže, že služba drží logiku, která patří do domény;
+- historie přeroste 1 000 rezervací na místo (C04, QC-2, D4).
 
 ## G1. Kontext systému
 

@@ -51,6 +51,16 @@ class ReservationServiceTest(unittest.TestCase):
     def _state(self, reservation_id):
         return next(r.state for r in self.service.reservations() if r.id == reservation_id)
 
+    def test_cp1_created_reservation_is_read_back_by_id_as_draft(self):
+        # README "CP1 walking skeleton", without the HTTP adapter.
+        x = self.service.create(PLACE.id, ALICE, T0, T0 + H)
+        repo = ReservationRepository(self.path)
+        try:
+            self.assertEqual(repo.get(x.id), x)
+            self.assertEqual(repo.get(x.id).state, State.DRAFT)
+        finally:
+            repo.close()
+
     def test_confirm_on_approval_place_waits_and_later_approve_confirms(self):
         x = self.service.create(APPROVAL_PLACE.id, ALICE, T0, T0 + H)
         self.assertEqual(self.service.confirm(x.id).state, State.PENDING_APPROVAL)
