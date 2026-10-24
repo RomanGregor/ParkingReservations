@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from parking.domain import ParkingPlace, RuleViolation, State, User, create_reservation
 from parking.places import PlaceCatalog
 from parking.repository import ReservationRepository
-from parking.service import ReservationService
+from parking.service import ReservationService, StoreBusy
 
 PLACE = ParkingPlace("p1", "A-12")
 APPROVAL_PLACE = ParkingPlace("p2", "VIP-01", requires_approval=True)
@@ -72,6 +72,23 @@ class ConcurrentOperations(unittest.TestCase):
         for t in threads:
             t.join()
         return results
+
+    def test_lock_timeout_is_store_busy_and_changes_nothing(self):
+        # C04: a Confirm that does not get the write lock in time fails with
+        # StoreBusy before reading anything, and the reservation stays DRAFT.
+        service = self._service(ReservationRepository(self.path))
+        x = service.create(PLACE.id, ALICE, T0, T0 + H)
+        service.close()
+        holder = ReservationRepository(self.path)
+        waiting = self._service(ReservationRepository(self.path, lock_timeout=0.1))
+        try:
+            with holder.transaction():
+                with self.assertRaises(StoreBusy):
+                    waiting.confirm(x.id)
+        finally:
+            holder.close()
+            waiting.close()
+        self.assertEqual(self._state(x.id), State.DRAFT)
 
     def _state(self, reservation_id):
         repo = ReservationRepository(self.path)

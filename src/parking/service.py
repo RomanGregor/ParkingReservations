@@ -5,7 +5,8 @@ reservations of its place, apply the domain rule, save. The SQLite write lock
 taken by `transaction()` keeps another instance from slipping its own write
 between our check and our write (REQ-04, REQ-06). `now` comes from the
 service's clock, read inside the transaction. The Driver is notified only
-after the commit; a failing notification does not undo the change.
+after the commit; a failing notification does not undo the change. If the
+lock cannot be obtained in time, StoreBusy is raised and nothing changes (C04).
 """
 import logging
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from parking import domain
 from parking.domain import ParkingPlace, Reservation, RuleViolation, State, User
 from parking.notification import LogNotifier, Notifier
 from parking.places import PlaceCatalog
-from parking.repository import ReservationRepository
+from parking.repository import ReservationRepository, StoreBusy  # noqa: F401  (StoreBusy is part of the service API)
 
 log = logging.getLogger("parking.service")
 
@@ -51,9 +52,11 @@ class ReservationService:
 
     # --- state changes -------------------------------------------------
     def create(self, place_id: str, user: User, start: datetime, end: datetime) -> Reservation:
-        """OP-01 Create Reservation. A DRAFT blocks nothing, so no lock is needed."""
+        """OP-01 Create Reservation. A DRAFT blocks nothing, so no other
+        reservation is read; the write still takes the lock like any other."""
         r = domain.create_reservation(self._catalog.find(place_id), user, start, end, self._clock())
-        self._repo.save(r)
+        with self._repo.transaction():
+            self._repo.save(r)
         return r
 
     def confirm(self, reservation_id: str) -> Reservation:
