@@ -24,3 +24,7 @@ SWI_L0*.pptx
 .vscode/
 .idea/
 .claude/settings.local.json
+
+
+# presentations
+presentation/
