@@ -32,10 +32,18 @@ Tests:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-C04 measurement (a few minutes):
+C04 measurement (a few minutes; 1 instance, then 2 processes confirming at once):
 
 ```
 PYTHONPATH=src python3 measurements/confirm_latency.py
+```
+
+The same on Windows PowerShell (`python` instead of `python3`):
+
+```
+$env:PYTHONPATH = "src"
+python -m unittest discover -s tests -v
+python measurements/confirm_latency.py
 ```
 
 ## Layout
@@ -46,7 +54,7 @@ docs/
   intent-and-change.md          # Project Frame + future pressure
   architecture-and-decisions.md # stack, C03 architecture (ADR-04), C05 detailed design
   specification.md              # C02: baseline v0.1/v0.2 behavior spec + diagrams
-  evidence-and-evolution.md     # evidence C01 spike, C02, C03, C05
+  evidence-and-evolution.md     # evidence C01 spike, C02-C05, C06 findings, C07 risk register
 run.py                          # launches the GUI
 measurements/confirm_latency.py # C04: Confirm time vs. history size, lock errors
 src/parking/                    # service (state changes), domain rules, place catalog,

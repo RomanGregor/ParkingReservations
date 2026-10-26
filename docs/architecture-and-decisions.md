@@ -40,13 +40,18 @@ showed that `isoformat()` / `fromisoformat()` round-trips timezone-aware
 datetimes losslessly, so no custom adapters are used.
 
 ### D4 – Lock timeout is an explicit outcome; no index (C04)
-Measured in C04 (`docs/evidence-and-evolution.md`, QC-1, QC-2): Confirm with
-10 000 past reservations per place has p95 ≈ 80 ms, an index on `place_id`
-changes that by under 10 %. With two instances confirming non-stop, 1 of 400
-confirms waits more than the 5 s lock timeout. Decision: keep ADR-04 and the
+Measured in C04 and re-measured in C07 after C06 F1
+(`docs/evidence-and-evolution.md`, QC-1, QC-2): Confirm with 10 000 past
+reservations per place has p95 ≈ 46–80 ms (one outlier run of 150 ms in 10
+runs); an index on `place_id` does not change either criterion. With two
+instances (two processes) confirming 200 times each at once, 1–2 of the 400
+concurrent confirms wait more than the 5 s lock timeout; at 1 000 per place
+none do, but the longest wait is already 2.6 s. Decision: keep ADR-04 and the
 schema; `transaction()` turns the timeout into `StoreBusy` (nothing changed,
-GUI says "try again"), and every write, Create included, goes through
-`transaction()`. Revisit with ADR-04 above 1 000 reservations per place.
+GUI says "try again", also for the expiry check in `refresh()` since C06 F2),
+and every write, Create included, goes through `transaction()`. Revisit with
+ADR-04 above 1 000 reservations per place, or at the first lock error in the
+2 × 200 measurement at the current volume.
 
 ---
 
@@ -295,7 +300,9 @@ jedno definované místo mimo transakci.
 - bude vyžadováno doručení notifikace nebo vypršení i bez běžícího klienta.
   Pak samostatný worker a outbox tabulka (nový runtime prvek);
 - se ukáže, že služba drží logiku, která patří do domény;
-- historie přeroste 1 000 rezervací na místo (C04, QC-2, D4).
+- historie přeroste 1 000 rezervací na místo, nebo se v měření 2 procesů
+  × 200 při aktuálním objemu objeví první chyba zámku (C04, QC-2, D4;
+  přeměřeno v C07).
 
 ## G1. Kontext systému
 
@@ -598,7 +605,7 @@ Spuštěno `PYTHONPATH=src python3 -m unittest discover -s tests -v`:
 | REQ-08: `expire_due` vyprší jen nerozhodnuté žádosti po `start` | OK | `test_service.test_expire_due_expires_only_undecided_requests_after_start` |
 | hranice `start` podle hodin služby | OK | `test_service.test_service_clock_decides_the_start_boundary` |
 | souběh: dvě konfliktní Approve ve dvou spojeních (REQ-06), dvě Confirm (REQ-04), Cancel × Confirm | OK, právě jedna `CONFIRMED`; Cancel vyhraje | `test_concurrency` (4 testy) |
-| testy souběhu opravdu chytají chybu | po odstranění `BEGIN IMMEDIATE` z `transaction()` selžou 3 ze 4 | mutace, ručně, vráceno |
+| testy souběhu opravdu chytají chybu | po odstranění `BEGIN IMMEDIATE` z `transaction()` selžou 3 ze 4 (stav C03; od C04 je testů souběhu 5, hodnotitelé C06 F3: deferred `BEGIN` → 4 z 5 FAIL, bez `transaction()` → 3 FAIL + 1 ERROR) | mutace, ručně, vráceno |
 | příklady ověření z C02 (OP-01..OP-05) | OK, beze změny | `test_domain` (27) + `test_persistence_spike` (2) |
 
 ## L2. Architektonické pravidlo
