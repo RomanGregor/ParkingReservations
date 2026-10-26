@@ -75,23 +75,35 @@ class App(tk.Tk):
         return sel[0]
 
     def _guard(self, action):
+        busy = None
         try:
             action()
         except (RuleViolation, ValueError) as e:
             messagebox.showerror("Not allowed", str(e))
         except StoreBusy as e:  # C04: another instance held the write lock too long
-            messagebox.showwarning("Busy", str(e))
-        self.refresh()
+            busy = e
+        # The expiry check in refresh() writes too and can be busy as well (C06 F2).
+        busy = self.refresh() or busy
+        if busy:
+            messagebox.showwarning("Busy", str(busy))
 
     def _tick(self):
         # Schedule first, so one failed refresh does not stop the expiry check.
         self.after(EXPIRY_CHECK_MS, self._tick)
+        # A busy store only postpones the expiry check to the next tick.
         self.refresh()
 
-    def refresh(self):
+    def refresh(self) -> StoreBusy | None:
+        """Run the expiry check and redraw the table. If the check does not get
+        the write lock in time, the table is redrawn anyway and the StoreBusy
+        is returned for the caller to report (C06 F2)."""
         # The UI only triggers the expiry check; ReservationService decides
         # which requests expire (REQ-08, ADR-04).
-        self.service.expire_due()
+        try:
+            self.service.expire_due()
+            busy = None
+        except StoreBusy as e:
+            busy = e
 
         self.table.delete(*self.table.get_children())
         order = {p.id: i for i, p in enumerate(self.places)}
@@ -100,6 +112,7 @@ class App(tk.Tk):
             self.table.insert("", "end", iid=r.id, values=(
                 r.id[:8], labels[r.place_id], r.user_id,
                 r.start.strftime(FMT), r.end.strftime(FMT), r.state.value))
+        return busy
 
     # --- actions -------------------------------------------------------
     def check(self):

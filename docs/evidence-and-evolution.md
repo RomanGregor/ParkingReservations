@@ -210,8 +210,9 @@ evidencí.
 
 ## C04 — Quality & Measurement
 
-Doplněno 2026-10-24 před C06, tedy po C05. Kód měření i výsledky jsou
-v tomto commitu.
+Doplněno 2026-10-24 před C06, tedy po C05 (commit `f5daa75`). Po nálezu
+C06 F1 přeměřeno v C07 se správnou zátěží QC-2, viz „Přeměření v C07“
+níže; výsledek, rozhodnutí a spouštěč níže platí podle přeměření.
 
 **Quality concern:** časové chování (ISO 25010 *performance efficiency /
 time behaviour*) operace Confirm. ADR-04 řadí všechny zápisy přes zámek
@@ -245,6 +246,11 @@ Notifier nic nedělá, takže čas je čtení, pravidlo, zápis a `COMMIT`
 v zámku, u 2 instancí navíc čekání na zámek. Volba `--index` měří
 alternativu s indexem na `place_id` (jen v testovací DB).
 
+Původní měření (`f5daa75`, Linux). **Neodpovídá QC-2 (C06 F1):** sloupec
+„2-inst“ byl 2 × 100 potvrzení ve dvou vláknech jednoho procesu a „lock
+errors“ i „confirmed“ počítaly i 200 solo potvrzení. Platí jen sloupce solo
+(QC-1).
+
 ```
 $ PYTHONPATH=src python3 measurements/confirm_latency.py --history 100 1000 10000 50000
 Python 3.12.3, SQLite 3.45.1, Linux x86_64, 16 CPUs; runs=200, index on place_id: no
@@ -259,46 +265,88 @@ $ PYTHONPATH=src python3 measurements/confirm_latency.py --index --history 10000
 ```
 
 Řádek 10 000 bez indexu je opakovaný 4× (p95 solo 78–80 ms, vždy 1 chyba
-zámku ze 400). Chyba je `database is locked` po 5,0 s.
+zámku). Chyba je `database is locked` po 5,0 s.
 
-**Výsledek:**
+### Přeměření v C07 (C06 F1)
+
+Skript od `ffb9c70` spouští pro QC-2 dva samostatné procesy (každý vlastní
+spojení, jako dvě instance v G4), každý vytvoří a pak současně potvrzuje
+200 `DRAFT`. Chyby zámku se počítají jen z těchto 400 souběžných potvrzení,
+solo běh (QC-1) je zvlášť. Měřeno 2026-10-26 na Windows (lokální SSD).
+
+```
+$ PYTHONPATH=src python measurements/confirm_latency.py
+Python 3.14.3, SQLite 3.50.4, Windows AMD64, 8 CPUs; runs=200, index on place_id: no
+solo = 1 instance x 200 (QC-1); 2-proc = 2 processes x 200 at the same time (QC-2); 2-proc max = longest successful confirm incl. waiting for the lock
+history/place  rows    solo p50   solo p95   solo max  2-proc p95  2-proc max  lock errors  confirmed
+          100     500    5.16 ms    6.10 ms    7.07 ms     9.89 ms  1643.92 ms        0/400  600/600
+         1000    5000    9.74 ms   11.76 ms   13.59 ms    18.66 ms  2581.68 ms        0/400  600/600
+        10000   50000  101.41 ms  150.18 ms  786.09 ms    94.04 ms  3925.98 ms        2/400  598/600
+
+$ PYTHONPATH=src python measurements/confirm_latency.py --history 10000     # 5 dalších běhů
+        10000   50000   41.22 ms   57.75 ms  112.93 ms    78.54 ms  1065.55 ms        2/400  598/600
+        10000   50000   41.56 ms   45.79 ms   72.62 ms    77.24 ms  1503.04 ms        2/400  598/600
+        10000   50000   42.26 ms   47.32 ms   55.52 ms    70.22 ms  5641.26 ms        1/400  599/600
+        10000   50000   60.17 ms   66.70 ms   80.72 ms    62.57 ms  4045.34 ms        1/400  599/600
+        10000   50000   41.59 ms   54.05 ms   75.20 ms    67.87 ms  5098.15 ms        1/400  599/600
+
+$ PYTHONPATH=src python measurements/confirm_latency.py --index --history 10000
+        10000   50000   35.15 ms   42.13 ms   55.09 ms    42.04 ms  1923.26 ms        1/400  599/600
+
+$ PYTHONPATH=src python measurements/confirm_latency.py --history 50000
+        50000  250000  205.14 ms  229.94 ms  426.79 ms   234.18 ms  3380.97 ms        7/400  593/600
+```
+
+„2-proc max“ je nejdelší *úspěšné* potvrzení. Že může přesáhnout 5 s,
+pravděpodobně způsobuje to, že busy handler SQLite započítává do timeoutu
+součet svých plánovaných uspání, ne skutečně uplynulý čas (neověřeno).
+
+**Výsledek** (platí od C07):
 
 | Criterion | Naměřeno (10 000/místo) | Výsledek |
 |---|---|---|
-| QC-1 p95 ≤ 100 ms | 77–80 ms | **splněno** (rezerva malá; při 50 000/místo 375 ms) |
-| QC-2 0 chyb zámku | 1 ze 400 v každém běhu | **nesplněno**; při ≤ 1 000/místo 0 chyb |
+| QC-1 p95 ≤ 100 ms | Linux (C04) 77–80 ms ve 4 bězích; Windows 46–67 ms v 5 bězích ze 6, jeden běh 150 ms (max 786 ms); hodnotitelé C06 na Windows 94,7 ms | **splněno v 9 z 10 vlastních běhů**; jeden odlehlý běh, příčina neověřená. Rezerva na Windows hodnotitelů jen 5 %. Při 50 000/místo 230 ms |
+| QC-2 0 chyb zámku ze 400 souběžných | 1–2/400 v každém ze 6 běhů; hodnotitelé C06 2–3/400 | **nesplněno**. Při 1 000/místo 0/400 (náš běh i hodnotitelé), při 50 000/místo 7/400 |
 
 Co měření ukázalo navíc:
 - čas roste s počtem rezervací místa, ne s SQL dotazem. Index na
-  `place_id` zlepší p95 jen o 3–10 % a chyby zámku nezmění. Většinu času
-  stojí převod řádků na `Reservation` a průchod v Pythonu;
-- chyby u QC-2 nejsou dlouhé jednotlivé transakce (p95 81 ms). Je to
-  nespravedlivé čekání na zámek SQLite: držitel zámek uvolní a hned ho
-  znovu vezme, čekající mezitím spí v busy handleru. Nejdelší čekání roste
-  s délkou transakce (0,7 s → 1,1 s → 2,7 s) a jedno z 400 přeleze 5 s;
+  `place_id` zlepšil p95 v jednom běhu o 10–25 % (42 ms proti 46–67 ms) a
+  chyby zámku nezměnil (1/400). Většinu času stojí převod řádků na
+  `Reservation` a průchod v Pythonu;
+- chyby u QC-2 nejsou dlouhé jednotlivé transakce (p95 souběžně 62–94 ms).
+  Je to nespravedlivé čekání na zámek SQLite: držitel zámek uvolní a hned
+  ho znovu vezme, čekající mezitím spí v busy handleru;
+- nejdelší čekání při 1 000/místo je už 2,6 s, tedy přes polovinu
+  `LOCK_TIMEOUT`. Rezerva spouštěče „> 1 000/místo“ je malá;
 - před C04 byla tahle chyba `sqlite3.OperationalError`, kterou GUI
   nechytalo (`_guard` chytal jen `RuleViolation` a `ValueError`).
   Uživatel nedostal hlášku. Stav zůstal správně beze změny.
 
 **Trade-off / decision** (D4 v `docs/architecture-and-decisions.md`):
-- **ADR-04 se nemění, index se nepřidává.** QC-1 platí a index nemění ani
-  jedno kritérium, jen přidá schéma.
+- **ADR-04 se nemění, index se nepřidává.** QC-1 platí i bez indexu a
+  index QC-2 nesplní, jen přidá schéma.
 - **Nesplněné QC-2 přijímáme pro deklarovaný horní odhad.** Nastává až při
   10 000 rezervacích na místo a nepřetržitém souběhu dvou instancí. Do
   1 000 rezervací na místo (zhruba první rok podle předpokladu výše) platí
-  obě kritéria.
-- **Selhání zámku je teď definovaný výsledek:** `transaction()` vyhodí
+  obě kritéria, i se správnou zátěží.
+- **Selhání zámku je definovaný výsledek:** `transaction()` vyhodí
   `StoreBusy`, nic se nezměnilo a GUI ukáže „try again“. Týká se i Create,
-  který teď zapisuje přes `transaction()`. Test
-  `test_concurrency.test_lock_timeout_is_store_busy_and_changes_nothing`;
-  když překlad chyby odstraníme, test selže.
+  který zapisuje přes `transaction()`, a od `3021f97` i kontroly vypršení
+  v `refresh()` (C06 F2): po akci tlačítka GUI ukáže „Busy“, časovač jen
+  odloží kontrolu na další minutu. Testy
+  `test_concurrency.test_lock_timeout_is_store_busy_and_changes_nothing`
+  a `test_concurrency.ExpiryWhileStoreBusy`.
 - **Spouštěč pro znovuotevření ADR-04:** víc než 1 000 rezervací na místo
-  (poslední naměřený bod, kde QC-2 platí). Pak úklid historie nebo filtr
-  v SQL podle stavu a intervalu.
+  (poslední naměřený bod, kde QC-2 platí se správnou zátěží, potvrzený
+  i hodnotiteli), nebo první chyba zámku v měření 2 procesů × 200 při
+  aktuálním objemu. Nejdelší čekání sledujeme jako indikátor: při 1 000/místo
+  je už 2,6 s z 5 s. Pak úklid historie nebo filtr v SQL podle stavu
+  a intervalu.
 
-**Zbývající mezery:** měřeno jen na jednom vývojovém stroji (Linux, lokální
-SSD). Windows ani síťový disk měřeny nejsou. Historie je syntetická a
-objem je předpoklad, ne údaj provozu.
+**Zbývající mezery:** měřeno na jednom stroji s Linuxem (C04) a jednom
+s Windows (C07), oba lokální SSD; síťový disk měřen není. Jeden běh QC-1
+na Windows (150 ms) je nevysvětlený. Historie je syntetická a objem je
+předpoklad, ne údaj provozu.
 
 ## C05 — Detailed Design Evidence
 
@@ -354,6 +402,14 @@ souběh dvou spojení nad jedním souborem.
 | DT-P3 po `start` | `DTApprove.test_DT_P3_at_or_after_start_is_too_late_even_with_a_conflict` | unit |
 | DT-P4 + DD-8 stav před časem | `DTApprove.test_DT_P4_only_pending_approval_can_be_approved_and_state_is_checked_first` | unit |
 | REQ-04, REQ-06: pravidlo + zámek SQLite při souběhu | `tests/test_concurrency.py` (4 testy, beze změny z C03) | integration |
+
+**Proč tato úroveň** (doplněno v C07 podle připomínky C06 k D3):
+
+| Test | Selected level | Why this level | What design decision |
+|---|---|---|---|
+| `DTAvailability.test_DT_A1_touching_on_the_left_is_available` | unit | rozhodnutí je jen porovnání intervalů v čisté funkci `evaluate_availability`; úložiště ani hodiny výsledek nemění, takže vyšší úroveň by přidala jen šum | DT-A1, DR-4: interval `[start, end)`, navazující rezervace nekoliduje (BR-01) |
+| `DDServiceCollaboration.test_DT_C4_DT_P2_conflict_is_deferred_to_approve_and_named_there` | component | výsledek závisí na tom, co vrátí skutečné `for_place` ze SQLite, na rollbacku transakce a na tom, že se při chybě nenotifikuje; to unit test s ručně sestaveným `existing` neověří | DT-C4 (kolize se odkládá na approve), DT-P2 (kolize pojmenovaná, stav zůstává), ADR-04 (hranice transakce a notifikace po commitu) |
+| `test_concurrency.test_two_concurrent_conflicting_confirmations_confirm_at_most_one` | integration | souběh dvou instancí vzniká až mezi dvěma spojeními nad jedním souborem; zámek `BEGIN IMMEDIATE` je vlastnost SQLite, ne kódu jednotky | REQ-04, DD-6: kontrola kolize a zápis v jedné transakci |
 
 ### Unit/component tests executed
 
@@ -444,3 +500,95 @@ Větev `c05-detailed-design` (z `c03-architecture`). DD před kódem:
 `2764ac8` (DD-1..DD-4), `a2f10de` (DD-5..DD-9). Implementace `bbe817b`,
 testy `91a9ed1`. Evidence a doplnění DD-4 z kontroly kódu `29d9382`
 (tag `c05`). Sloučeno do `main` přes PR #7 (`5ba2b09`).
+
+## C06 — Nálezy nezávislého assessmentu a jejich vypořádání
+
+Hodnotil tým VoltBook (J. Staněk, D. Volný, Š. Exner) 2026-10-25 nad
+baseline `c06-baseline` = `a238f54` (Windows 11, Python 3.14.7, SQLite
+3.50.4). Výsledek: B1–B2, R1–R5, A1–A4 a D1–D5 YES; Q1 YES, Q2 a Q3
+PARTLY. Tři candidate findings, dva ověřené.
+
+| ID | Claim (C01–C05) | Expected → Observed | Verify | Disposition | Action / closure evidence |
+|---|---|---|---|---|---|
+| F1 | C04 QC-2: „0 chyb zámku ze 400 (2 instance × 200)“, výsledek „1 ze 400“ | 2 procesy × 200 souběžných potvrzení → skript pouštěl 2 × 100 ve dvou vláknech jednoho procesu a do „ze 400“ počítal 200 solo potvrzení (`confirm_latency.py:94-125` na `a238f54`) | potvrzeno čtením skriptu; hodnotitelé se správnou zátěží naměřili 2–3/400 chyb | VERIFIED FINDING → **ACCEPT**. Závěr „QC-2 při 10 000/místo nesplněno“ platil, chybná byla kvantifikace a spouštěč v D4 | skript měří 2 procesy × 200 (`ffb9c70`); přeměřeno, opravena evidence C04, D4 a spouštěč ADR-04 (viz C04 výše). **Uzavřeno** |
+| F2 | D4: „StoreBusy, nic se nezměnilo, GUI ukáže try again“ | každý zápis z GUI skončí hláškou → zápis vypršení v `refresh()` (`gui.py:91-94` na `a238f54`) byl mimo try/except, StoreBusy utekl z Tk callbacku | reprodukováno testem se zamčenou DB; na původním `gui.py` test padá na `StoreBusy` | VERIFIED FINDING → **ACCEPT**. Data zůstávala konzistentní, chyběla slíbená reakce GUI | `refresh()` chytá StoreBusy a tabulku překreslí, `_guard` ukáže „Busy“, `_tick` jen odloží vypršení (`3021f97`); testy `test_concurrency.ExpiryWhileStoreBusy` (2). **Uzavřeno** |
+| F3 | testy souběhu odhalí chybějící zámek (REQ-04, REQ-06) | podezření, že `SlowRepository` zpomaluje jen `save` → mutace: deferred `BEGIN` 4 z 5 FAIL, bez `transaction()` 3 FAIL + 1 ERROR | mutace hodnotitelů | REJECTED CANDIDATE | no-change; poznámka o 5 testech doplněna k L1 v `architecture-and-decisions.md` |
+
+Drobnosti z formuláře, opravené v C07: evidence C04 neuváděla commit (je to
+`f5daa75`), poslední uvedený počet testů byl 76 (baseline měla 78, po C07
+je 80), README mělo jen bash syntaxi (doplněn PowerShell), u D3 chybělo
+zdůvodnění úrovně testů (tabulka „Proč tato úroveň“ v C05).
+
+Testy po opravách: `PYTHONPATH=src python -m unittest discover -s tests`
+→ `Ran 80 tests — OK` (78 z baseline + 2 nové pro F2).
+
+## C07 — Risk register
+
+Klasifikace před ošetřením: L a I 1–3, priorita L × I (1–2 LOW, 3–4
+MEDIUM, 6–9 HIGH). Actual residual se snižuje jen s ověřeným opatřením,
+jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
+
+### R-01
+- statement: Implementaci a evidenci C02–C04 (`service.py`, `test_concurrency.py`, `confirm_latency.py`; 24 ze 40 commitů) napsal hlavně jeden člen → při jeho nedostupnosti nikdo jiný neopraví nálezy ani nezopakuje měření → uzavření C06 findings a příprava CP2 se zpozdí.
+- category: People / Resources
+- initial: L=2, I=3 → HIGH (6); zastupitelnost nebyla vyzkoušena, C05 také vytvořil jediný člen.
+- strategy: MITIGATE – omezit single point of failure.
+- plan: opravy F1 a F2 udělá jiný člen než autor původního kódu, s review autora; čistý checkout + testy + měření podle README na druhém stroji (Windows). Owner: R. Gřegoř.
+- evidence: F1 a F2 opravil R. Gřegoř (`3021f97`, `ffb9c70`), měření proběhlo na jeho stroji s Windows. Review autorem původního kódu zatím neproběhlo.
+- expected: L=1, I=2 → LOW (2)
+- actual: NOT VERIFIED – chybí review opravy druhým členem.
+- acceptance: po review přijme R. Gřegoř za tým.
+- monitor: trigger – PR k opravě bez review od jiného člena nebo selhání čistého buildu; přezkum na C08.
+
+### R-02
+- statement: ADR-04 řadí zápisy zámkem celé SQLite a Confirm v zámku prochází celou historii místa → se 2 instancemi a rostoucí historií čeká potvrzení déle než `LOCK_TIMEOUT` 5 s → operace skončí StoreBusy a uživatel musí opakovat (BR-02 zůstává splněno).
+- category: Technical / Quality (C04 QC-2, riziko C05 „lineární průchod uvnitř zámku“)
+- initial: L=2, I=2 → MEDIUM (4); objem historie je předpoklad (Unknown z C01), ne provozní údaj.
+- strategy: ACCEPT (D4) s monitoringem; ADR-04 a schéma beze změny.
+- plan: přijetí opřít o měření ve správném kontextu (F1). Owner: R. Gřegoř.
+- evidence: přeměřeno se 2 procesy × 200 (C04 výše): 1–2/400 chyb při 10 000/místo, 0/400 při 1 000/místo, nejdelší čekání při 1 000/místo 2,6 s.
+- expected: L=2, I=2 → MEDIUM (4) – přijetí riziko nesnižuje.
+- actual: MEDIUM (4), přijato na základě nového měření.
+- acceptance: tým pro CP2; contingency: filtr v SQL podle stavu a intervalu nebo úklid historie (C05).
+- monitor: trigger – víc než 1 000 rezervací na místo, nebo první chyba zámku v měření 2 procesů × 200 při aktuálním objemu (D4); indikátor – nejdelší čekání na zámek; přezkum při každém novém měření.
+
+### R-03
+- statement: Evidence C04 a návod ke spuštění vznikly na jednom vývojovém stroji (Linux, README jen v bash syntaxi) → na demonstračním stroji s Windows se příkazy podle README nespustí nebo se QC-1 nepotvrdí → tvrzení QC-1 nelze při obhajobě reprodukovat.
+- category: Release / Operation
+- initial: L=2, I=2 → MEDIUM (4); hodnotitelé na Windows naměřili QC-1 p95 94,7 ms (rezerva 5 %).
+- strategy: MITIGATE
+- plan: README s PowerShell příkazy; měření i na Windows, výsledky uvádět po prostředích. Owner: R. Gřegoř.
+- evidence: README doplněno; C04 přeměřeno na Windows (C04 výše).
+- expected: L=1, I=2 → LOW (2)
+- actual: MEDIUM (4) – README je opravené, ale QC-1 na Windows není stabilní: 5 z 6 běhů 46–67 ms, jeden 150 ms, hodnotitelé 94,7 ms. Trigger (> 90 ms) tím nastal; další krok je zjistit příčinu odlehlého běhu.
+- acceptance: R. Gřegoř; contingency: obhajovat na stroji, kde je měření doložené.
+- monitor: trigger – p95 QC-1 > 90 ms na kterémkoli vykázaném stroji (rezerva < 10 %).
+
+### R-04
+- statement: README plánuje HTTP adaptér (CP1 walking skeleton, AD-04), který neexistuje; DD-4 předpokládá vstup jako aware UTC → adaptér psaný těsně před CP2 → `TypeError` místo chyby pravidla, neověřený druhý proces nad SQLite, nehotová demonstrace.
+- category: Schedule / Integration
+- initial: L=2, I=2 → MEDIUM (4); adaptér nezačat, termín CP2 v plánu týmu chybí.
+- strategy: AVOID (návrh) – pokud HTTP není v rozsahu CP2, zůstává GUI jediným klientem; jinak MITIGATE (tenký adaptér + 1 E2E test).
+- plan: rozhodnout s cvičícím na C08. Owner: R. Gřegoř.
+- evidence: zatím žádná.
+- expected: AVOID: L=1, I=1 → LOW (1)
+- actual: NOT VERIFIED – rozhodnutí nepadlo.
+- acceptance: tým + cvičící.
+- monitor: trigger – cvičící potvrdí HTTP v rozsahu CP2.
+
+### R-05
+- statement: Role se neověřují (C03 F6) a hláška kolize ukazuje id cizí rezervace → při víceuživatelském provozu schválí VIP žádost neoprávněná osoba → obejití schvalování v0.2.
+- category: Security / Privacy
+- initial: L=1, I=2 → LOW (2); lokální aplikace, přihlášení C01–C05 nevyžaduje.
+- strategy: ACCEPT
+- plan: žádné opatření pro CP2.
+- evidence: nic k ověření.
+- expected: LOW (2)
+- actual: LOW (2), přijato.
+- acceptance: tým; důvod: CP2 nepožaduje přihlášení.
+- monitor: trigger – přibude přihlášení, HTTP klient nebo víc uživatelů nad jednou DB.
+
+### Issues (už nastaly, nejsou rizika)
+- I-01 = C06 F2 – uzavřeno `3021f97`.
+- I-02 = C06 F1 – uzavřeno `ffb9c70` + přeměření v C04.
+- I-03 drobné nekonzistence dokumentace (viz výše) – opraveno v C07.
