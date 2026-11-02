@@ -22,6 +22,7 @@ import argparse
 import multiprocessing
 import os
 import platform
+import queue
 import sqlite3
 import statistics
 import sys
@@ -87,16 +88,69 @@ def p95(values: list[float]) -> float:
     return statistics.quantiles(values, n=20, method="inclusive")[18]
 
 
+BARRIER_TIMEOUT = 120.0  # seconds; creating `runs` DRAFTs takes far less
+
+
 def instance(path: str, first_slot: int, runs: int, ready, results) -> None:
     """One application instance (G4): its own process and connection. Creates
-    its DRAFTs, waits for the other instance, then confirms them all."""
-    service = open_service(path)
-    ids = drafts(service, runs, first_slot)
-    ready.wait()
-    times, errors = [], []
-    timed_confirms(service, ids, times, errors)
-    service.close()
-    results.put((times, errors))
+    its DRAFTs, waits for the other instance, then confirms them all.
+
+    Any failure (e.g. StoreBusy while creating DRAFTs) is reported to the
+    parent and breaks the barrier, so the other instance stops waiting too
+    instead of blocking the measurement forever."""
+    try:
+        service = open_service(path)
+        try:
+            ids = drafts(service, runs, first_slot)
+            ready.wait(BARRIER_TIMEOUT)
+            times, errors = [], []
+            timed_confirms(service, ids, times, errors)
+        finally:
+            service.close()
+    except BaseException as e:
+        ready.abort()
+        results.put(("failed", f"{type(e).__name__}: {e}"))
+        return
+    results.put(("ok", (times, errors)))
+
+
+def contended(paths: list[str], runs: int) -> tuple[list[float], list[str]]:
+    """QC-2: one instance (process) per database path confirms `runs` DRAFTs,
+    all at the same time; the measurement passes the same file twice. Returns
+    the confirm times and lock errors of all instances; raises RuntimeError if
+    an instance fails or dies instead of reporting them."""
+    # spawn, not fork: the same start method on Windows and Linux.
+    ctx = multiprocessing.get_context("spawn")
+    ready, results = ctx.Barrier(len(paths)), ctx.Queue()
+    procs = [ctx.Process(target=instance, args=(path, (i + 1) * runs, runs, ready, results))
+             for i, path in enumerate(paths)]
+    for p in procs:
+        p.start()
+    times, errors, failures = [], [], []
+    pending = len(procs)
+    while pending:  # read before join, so a full queue cannot block a child
+        try:
+            status, payload = results.get(timeout=1)
+        except queue.Empty:
+            if any(p.is_alive() for p in procs):
+                continue
+            try:  # every instance has exited: take what they managed to send
+                status, payload = results.get(timeout=1)
+            except queue.Empty:
+                failures.append(f"{pending} instance(s) exited without a result "
+                                f"(exit codes {[p.exitcode for p in procs]})")
+                break
+        pending -= 1
+        if status == "ok":
+            times += payload[0]
+            errors += payload[1]
+        else:
+            failures.append(payload)
+    for p in procs:
+        p.join()
+    if failures:
+        raise RuntimeError("contended measurement failed: " + "; ".join(failures))
+    return times, errors
 
 
 def measure(per_place: int, runs: int, index: bool = False) -> dict:
@@ -109,20 +163,7 @@ def measure(per_place: int, runs: int, index: bool = False) -> dict:
         timed_confirms(service, drafts(service, runs, 0), solo, solo_errors)
         service.close()
 
-        # spawn, not fork: the same start method on Windows and Linux.
-        ctx = multiprocessing.get_context("spawn")
-        ready, results = ctx.Barrier(2), ctx.Queue()
-        procs = [ctx.Process(target=instance, args=(path, slot, runs, ready, results))
-                 for slot in (runs, 2 * runs)]
-        for p in procs:
-            p.start()
-        contended, contended_errors = [], []
-        for _ in procs:  # read before join, so a full queue cannot block a child
-            times, errors = results.get()
-            contended += times
-            contended_errors += errors
-        for p in procs:
-            p.join()
+        contended_times, contended_errors = contended([path, path], runs)
 
         check = ReservationRepository(path)
         confirmed = sum(r.state == State.CONFIRMED for r in check.for_place(PLACE.id) if r.user_id == "bench")
@@ -132,7 +173,7 @@ def measure(per_place: int, runs: int, index: bool = False) -> dict:
         "rows": per_place * len(PLACES), "per_place": per_place,
         "solo_p50": statistics.median(solo), "solo_p95": p95(solo), "solo_max": max(solo),
         "solo_errors": len(solo_errors),
-        "cont_p95": p95(contended), "cont_max": max(contended),
+        "cont_p95": p95(contended_times), "cont_max": max(contended_times),
         "errors": len(contended_errors), "concurrent": 2 * runs,
         "confirmed": confirmed, "expected": 3 * runs,
     }
