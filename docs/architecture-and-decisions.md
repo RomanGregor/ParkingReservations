@@ -7,6 +7,8 @@ tests/              → exercise domain rules, the service, persistence, races
                       and the architecture rule
 src/parking/
   gui.py            → Reservation UI: input and display, calls the service only
+  http_api.py       → HTTP API (CP1 walking skeleton): create + read by id,
+                      calls the service only (D5)
   service.py        → Reservation Management: every state change, transaction
                       boundary, clock (ADR-04)
   domain.py         → ParkingPlace, User, Reservation, State + business rules
@@ -15,7 +17,7 @@ src/parking/
   notification.py   → Notification Integration: Notifier + LogNotifier stub
 ```
 
-The domain module has no I/O. Clients (the GUI now, the HTTP API in CP1)
+The domain module has no I/O. Clients (the GUI and, since C07, the HTTP API)
 go through `ReservationService`; it loads the reservation and the other
 reservations of its place, applies the domain rule and saves, all inside
 one `transaction()`, and notifies the Driver after the commit. See C03
@@ -27,7 +29,8 @@ below, ADR-04.
 Chosen over Java + Spring Boot because the whole team knows Python, nothing
 has to be installed, and a clean checkout runs with one command. Cost: no
 framework for the later HTTP layer; we will add one (FastAPI or Flask) when
-the walking skeleton needs it.
+the walking skeleton needs it. *(C07: the walking skeleton was built with the
+standard library instead, see D5.)*
 
 ### D2 – SQLite as the database
 Zero configuration, file-based, ships with Python. Sufficient for CP1 and
@@ -42,8 +45,9 @@ datetimes losslessly, so no custom adapters are used.
 ### D4 – Lock timeout is an explicit outcome; no index (C04)
 Measured in C04 and re-measured in C07 after C06 F1
 (`docs/evidence-and-evolution.md`, QC-1, QC-2): Confirm with 10 000 past
-reservations per place has p95 ≈ 30–80 ms (one outlier run of 150 ms in 14
-runs); an index on `place_id` does not change either criterion. With two
+reservations per place has p95 ≈ 30–80 ms (one outlier run of 150 ms in 24
+runs, probably on battery power); an index on `place_id` does not change
+either criterion. With two
 instances (two processes) confirming 200 times each at once, 1–2 of the 400
 concurrent confirms wait more than the 5 s lock timeout; at 1 000 per place
 none do, but the longest wait is already 2.6 s. Decision: keep ADR-04 and the
@@ -52,6 +56,20 @@ GUI says "try again", also for the expiry check in `refresh()` since C06 F2),
 and every write, Create included, goes through `transaction()`. Revisit with
 ADR-04 above 1 000 reservations per place, or at the first lock error in the
 2 × 200 measurement at the current volume.
+
+### D5 – HTTP API on the standard library `http.server` (C07, R-04)
+The team decided on 2026-11-02 that CP2 includes the HTTP client, so the CP1
+walking skeleton was built now instead of right before CP2 (R-04). It uses
+`http.server.ThreadingHTTPServer` rather than FastAPI or Flask (as D1
+expected): two endpoints do not need routing or schema libraries, and keeping
+D1 means a clean checkout still runs without installing anything. The API is
+a thin client like the GUI (ADR-04): every request opens its own
+`ReservationService` and connection, so the SQLite write lock orders it
+against the GUI exactly like a second instance in G4; `test_architecture`
+checks that neither client imports the repository. Times need a UTC offset
+(D3, DD-4 Pre); a naive time is a 400. Revisit when the API needs more than
+create and read (e.g. confirm, approve, authentication) – then a framework
+may pay off, and R-05 must be reviewed again.
 
 ---
 
@@ -614,7 +632,8 @@ Spuštěno `PYTHONPATH=src python3 -m unittest discover -s tests -v`:
 Reservation Management (ADR-04, G2, G3). Konkrétně: `.state` se přiřazuje
 jen v `domain.py`, přechodová pravidla z `domain.py` volá jen `service.py`,
 `gui.py` neimportuje `parking.repository` ani `sqlite3` a `domain.py`
-nezávisí na I/O ani na jiných modulech `parking`.
+nezávisí na I/O ani na jiných modulech `parking`. *(C07: totéž platí pro
+druhého klienta `http_api.py`, test kontroluje oba, D5.)*
 
 **Kontrola:** `tests/test_architecture.py` projde AST všech
 `src/parking/*.py`. Běží s ostatními testy (`unittest discover`).
