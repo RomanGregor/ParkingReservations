@@ -3,7 +3,7 @@
 Only Reservation Management changes Reservation lifecycle state:
 - `Reservation.state` is assigned only in domain.py;
 - the transition rules of domain.py are called only from service.py;
-- the GUI depends on the service, never on the repository;
+- the clients (GUI, HTTP API) depend on the service, never on the repository;
 - domain.py has no I/O and depends on no other parking module.
 """
 import ast
@@ -12,6 +12,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "parking"
 TRANSITION_RULES = {"create_reservation", "confirm", "approve", "reject", "cancel", "expire_if_due"}
+CLIENTS = {"gui.py", "http_api.py"}  # AD-04: every client goes through ReservationService
 
 
 def imports(tree: ast.AST) -> set[str]:
@@ -49,10 +50,10 @@ def violations(src: Path = SRC) -> list[str]:
                         and isinstance(node.value, ast.Name) and node.value.id == "domain"):
                     found.append(f"{name}:{node.lineno} calls domain.{node.attr}")
 
-        if name == "gui.py":
+        if name in CLIENTS:
             for module in ("parking.repository", "sqlite3"):
                 if any(i == module or i.startswith(module + ".") for i in imported):
-                    found.append(f"gui.py imports {module}")
+                    found.append(f"{name} imports {module}")
 
         if name == "domain.py":
             for i in sorted(imported):

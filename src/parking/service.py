@@ -45,6 +45,10 @@ class ReservationService:
     def reservations(self) -> list[Reservation]:
         return self._repo.all()
 
+    def reservation(self, reservation_id: str) -> Reservation | None:
+        """One reservation by id, e.g. to read a new DRAFT back (CP1 walking skeleton)."""
+        return self._repo.get(reservation_id)
+
     def check(self, place_id: str, start: datetime, end: datetime) -> bool:
         """OP-02 Check Availability."""
         place = self._catalog.find(place_id)
