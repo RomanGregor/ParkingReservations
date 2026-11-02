@@ -42,7 +42,7 @@ datetimes losslessly, so no custom adapters are used.
 ### D4 – Lock timeout is an explicit outcome; no index (C04)
 Measured in C04 and re-measured in C07 after C06 F1
 (`docs/evidence-and-evolution.md`, QC-1, QC-2): Confirm with 10 000 past
-reservations per place has p95 ≈ 46–80 ms (one outlier run of 150 ms in 10
+reservations per place has p95 ≈ 30–80 ms (one outlier run of 150 ms in 14
 runs); an index on `place_id` does not change either criterion. With two
 instances (two processes) confirming 200 times each at once, 1–2 of the 400
 concurrent confirms wait more than the 5 s lock timeout; at 1 000 per place

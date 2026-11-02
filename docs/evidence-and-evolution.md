@@ -297,6 +297,27 @@ $ PYTHONPATH=src python measurements/confirm_latency.py --history 50000
         50000  250000  205.14 ms  229.94 ms  426.79 ms   234.18 ms  3380.97 ms        7/400  593/600
 ```
 
+Kontrola na druhém stroji (2026-11-02, Linux, čistý checkout `0c263f0`, příkazy
+podle README):
+
+```
+$ PYTHONPATH=src python3 measurements/confirm_latency.py
+Python 3.12.3, SQLite 3.45.1, Linux x86_64, 16 CPUs; runs=200, index on place_id: no
+history/place  rows    solo p50   solo p95   solo max  2-proc p95  2-proc max  lock errors  confirmed
+          100     500    5.38 ms    6.22 ms    6.70 ms     8.18 ms  1439.19 ms        0/400  600/600
+         1000    5000    8.67 ms    9.63 ms   12.53 ms    11.80 ms  2146.19 ms        0/400  600/600
+        10000   50000   26.78 ms   48.93 ms   55.45 ms    46.41 ms  1265.55 ms        1/400  599/600
+
+$ PYTHONPATH=src python3 measurements/confirm_latency.py --history 10000     # 3 další běhy
+        10000   50000   27.13 ms   49.70 ms   55.94 ms    50.16 ms  1261.62 ms        1/400  599/600
+        10000   50000   26.86 ms   30.19 ms   31.90 ms    49.67 ms  1161.83 ms        1/400  599/600
+        10000   50000   27.06 ms   30.05 ms   32.01 ms    46.57 ms  1264.87 ms        1/400  599/600
+```
+
+Tentýž stroj dal v C04 solo p95 77–80 ms. Solo část skriptu ani kód Confirm se
+od té doby nezměnily, příčina rozdílu není ověřená (pravděpodobně zatížení
+stroje), proto uvádíme rozsah, ne jedno číslo.
+
 „2-proc max“ je nejdelší *úspěšné* potvrzení. Že může přesáhnout 5 s,
 pravděpodobně způsobuje to, že busy handler SQLite započítává do timeoutu
 součet svých plánovaných uspání, ne skutečně uplynulý čas (neověřeno).
@@ -305,8 +326,8 @@ součet svých plánovaných uspání, ne skutečně uplynulý čas (neověřeno
 
 | Criterion | Naměřeno (10 000/místo) | Výsledek |
 |---|---|---|
-| QC-1 p95 ≤ 100 ms | Linux (C04) 77–80 ms ve 4 bězích; Windows 46–67 ms v 5 bězích ze 6, jeden běh 150 ms (max 786 ms); hodnotitelé C06 na Windows 94,7 ms | **splněno v 9 z 10 vlastních běhů**; jeden odlehlý běh, příčina neověřená. Rezerva na Windows hodnotitelů jen 5 %. Při 50 000/místo 230 ms |
-| QC-2 0 chyb zámku ze 400 souběžných | 1–2/400 v každém ze 6 běhů; hodnotitelé C06 2–3/400 | **nesplněno**. Při 1 000/místo 0/400 (náš běh i hodnotitelé), při 50 000/místo 7/400 |
+| QC-1 p95 ≤ 100 ms | Linux 77–80 ms ve 4 bězích (C04) a 30–50 ms ve 4 bězích (2026-11-02); Windows 46–67 ms v 5 bězích ze 6, jeden běh 150 ms (max 786 ms); hodnotitelé C06 na Windows 94,7 ms | **splněno v 13 ze 14 vlastních běhů**; jeden odlehlý běh, příčina neověřená. Rezerva na Windows hodnotitelů jen 5 %. Při 50 000/místo 230 ms |
+| QC-2 0 chyb zámku ze 400 souběžných | Windows 1–2/400 v každém ze 6 běhů; Linux 1/400 v každém ze 4 běhů; hodnotitelé C06 2–3/400 | **nesplněno**. Při 1 000/místo 0/400 (náš běh i hodnotitelé), při 50 000/místo 7/400 |
 
 Co měření ukázalo navíc:
 - čas roste s počtem rezervací místa, ne s SQL dotazem. Index na
@@ -343,9 +364,10 @@ Co měření ukázalo navíc:
   je už 2,6 s z 5 s. Pak úklid historie nebo filtr v SQL podle stavu
   a intervalu.
 
-**Zbývající mezery:** měřeno na jednom stroji s Linuxem (C04) a jednom
-s Windows (C07), oba lokální SSD; síťový disk měřen není. Jeden běh QC-1
-na Windows (150 ms) je nevysvětlený. Historie je syntetická a objem je
+**Zbývající mezery:** QC-2 se správnou zátěží je měřené na jednom stroji
+s Windows a jednom s Linuxem, oba lokální SSD; síťový disk měřen není. Jeden
+běh QC-1 na Windows (150 ms) a rozdíl mezi linuxovými měřeními (77–80 ms
+proti 30–50 ms) jsou nevysvětlené. Historie je syntetická a objem je
 předpoklad, ne údaj provozu.
 
 ## C05 — Detailed Design Evidence
@@ -522,11 +544,20 @@ zdůvodnění úrovně testů (tabulka „Proč tato úroveň“ v C05).
 Testy po opravách: `PYTHONPATH=src python -m unittest discover -s tests`
 → `Ran 80 tests — OK` (78 z baseline + 2 nové pro F2).
 
+Review oprav F2 (`3021f97`) a F1 (`ffb9c70`): O. Malinák, 2026-11-02, s pomocí
+Claude Code. Čistý checkout `0c263f0` na Linuxu: 80 testů OK, žádný přeskočený.
+S `gui.py` z `3021f97^` skončí
+`test_gui_reports_a_busy_expiry_check_and_keeps_running` chybou `StoreBusy`,
+ostatní testy projdou. Skript měří 2 procesy × 200, chyby počítá jen ze
+souběžných potvrzení a solo běh hlásí zvlášť. Připomínka bez změny kódu: když
+proces měření spadne před bariérou (např. `StoreBusy` při vytváření `DRAFT`),
+skript se zablokuje. Týká se jen měření, ne aplikace; zatím se to nestalo.
+
 ## C07 — Risk register
 
 Klasifikace před ošetřením: L a I 1–3, priorita L × I (1–2 LOW, 3–4
 MEDIUM, 6–9 HIGH). Actual residual se snižuje jen s ověřeným opatřením,
-jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
+jinak NOT VERIFIED. Stav k 2026-11-02, nad `0c263f0` (merge C07 do `main`).
 
 ### R-01
 - statement: Implementaci a evidenci C02–C04 (`service.py`, `test_concurrency.py`, `confirm_latency.py`; 24 ze 40 commitů) napsal hlavně jeden člen → při jeho nedostupnosti nikdo jiný neopraví nálezy ani nezopakuje měření → uzavření C06 findings a příprava CP2 se zpozdí.
@@ -534,10 +565,10 @@ jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
 - initial: L=2, I=3 → HIGH (6); zastupitelnost nebyla vyzkoušena, C05 také vytvořil jediný člen.
 - strategy: MITIGATE – omezit single point of failure.
 - plan: opravy F1 a F2 udělá jiný člen než autor původního kódu, s review autora; čistý checkout + testy + měření podle README na druhém stroji (Windows). Owner: R. Gřegoř.
-- evidence: F1 a F2 opravil R. Gřegoř (`3021f97`, `ffb9c70`), měření proběhlo na jeho stroji s Windows. Review autorem původního kódu zatím neproběhlo.
+- evidence: F1 a F2 opravil R. Gřegoř (`3021f97`, `ffb9c70`), měření proběhlo na jeho stroji s Windows. Review autorem původního kódu: O. Malinák 2026-11-02 (viz C06), včetně čistého checkoutu, testů a měření na Linuxu.
 - expected: L=1, I=2 → LOW (2)
-- actual: NOT VERIFIED – chybí review opravy druhým členem.
-- acceptance: po review přijme R. Gřegoř za tým.
+- actual: L=1, I=2 → LOW (2) – oprava i měření jiným členem a review proběhly; zastupitelnost je ověřená na opravách F1 a F2.
+- acceptance: čeká na přijetí R. Gřegořem za tým.
 - monitor: trigger – PR k opravě bez review od jiného člena nebo selhání čistého buildu; přezkum na C08.
 
 ### R-02
@@ -558,7 +589,7 @@ jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
 - initial: L=2, I=2 → MEDIUM (4); hodnotitelé na Windows naměřili QC-1 p95 94,7 ms (rezerva 5 %).
 - strategy: MITIGATE
 - plan: README s PowerShell příkazy; měření i na Windows, výsledky uvádět po prostředích. Owner: R. Gřegoř.
-- evidence: README doplněno; C04 přeměřeno na Windows (C04 výše).
+- evidence: README doplněno; C04 přeměřeno na Windows podle README (C04 výše). Chybí doložený výstup 80 testů na Windows: hodnotitelé C06 ověřili na Windows baseline se 78 testy, u běhu 80 testů prostředí uvedené není. Doplní R. Gřegoř.
 - expected: L=1, I=2 → LOW (2)
 - actual: MEDIUM (4) – README je opravené, ale QC-1 na Windows není stabilní: 5 z 6 běhů 46–67 ms, jeden 150 ms, hodnotitelé 94,7 ms. Trigger (> 90 ms) tím nastal; další krok je zjistit příčinu odlehlého běhu.
 - acceptance: R. Gřegoř; contingency: obhajovat na stroji, kde je měření doložené.
@@ -570,9 +601,9 @@ jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
 - initial: L=2, I=2 → MEDIUM (4); adaptér nezačat, termín CP2 v plánu týmu chybí.
 - strategy: AVOID (návrh) – pokud HTTP není v rozsahu CP2, zůstává GUI jediným klientem; jinak MITIGATE (tenký adaptér + 1 E2E test).
 - plan: rozhodnout s cvičícím na C08. Owner: R. Gřegoř.
-- evidence: zatím žádná.
+- evidence: k 2026-11-02 žádná. Rozhodnutí HTTP ano/ne nepadlo a termín CP2 tým nezná; plán týmu v repu není.
 - expected: AVOID: L=1, I=1 → LOW (1)
-- actual: NOT VERIFIED – rozhodnutí nepadlo.
+- actual: NOT VERIFIED – rozhodnutí ani termín CP2 nejsou zapsané (otevřené).
 - acceptance: tým + cvičící.
 - monitor: trigger – cvičící potvrdí HTTP v rozsahu CP2.
 
@@ -589,6 +620,6 @@ jinak NOT VERIFIED. Stav k větvi `c07-c06-findings`.
 - monitor: trigger – přibude přihlášení, HTTP klient nebo víc uživatelů nad jednou DB.
 
 ### Issues (už nastaly, nejsou rizika)
-- I-01 = C06 F2 – uzavřeno `3021f97`.
-- I-02 = C06 F1 – uzavřeno `ffb9c70` + přeměření v C04.
-- I-03 drobné nekonzistence dokumentace (viz výše) – opraveno v C07.
+- I-01 = C06 F2 (P1) – uzavřeno `3021f97`.
+- I-02 = C06 F1 (P2) – uzavřeno `ffb9c70` + přeměření v C04 (`da3d858`).
+- I-03 drobné nekonzistence dokumentace (viz C06 „Drobnosti z formuláře“) – opraveno v `da3d858`; zkontrolováno 2026-11-02 (commit v C04, 80 testů, PowerShell v README, „Proč tato úroveň“, poznámka k L1).
