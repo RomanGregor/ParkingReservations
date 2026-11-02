@@ -318,6 +318,34 @@ Tentýž stroj dal v C04 solo p95 77–80 ms. Solo část skriptu ani kód Confi
 od té doby nezměnily, příčina rozdílu není ověřená (pravděpodobně zatížení
 stroje), proto uvádíme rozsah, ne jedno číslo.
 
+Kolísání QC-1 na Windows (C07 P2, 2026-11-02, skript od `322bc58`, měření
+se nezměnilo). Stroj: notebook AMD Ryzen 7 4700U (8 jader), 15,4 GB RAM,
+NVMe SSD, Windows 11 IoT Enterprise LTSC 10.0.26100, plán napájení
+Balanced, **připojený adaptér**, během měření nic dalšího neběželo:
+
+```
+$ PYTHONPATH=src python measurements/confirm_latency.py --history 10000     # 10 běhů
+Python 3.14.3, SQLite 3.50.4, Windows AMD64, 8 CPUs; runs=200, index on place_id: no
+history/place  rows    solo p50   solo p95   solo max  2-proc p95  2-proc max  lock errors  confirmed
+        10000   50000   39.47 ms   52.93 ms   89.05 ms    48.38 ms  2525.43 ms        1/400  599/600
+        10000   50000   38.00 ms   40.90 ms   59.73 ms    53.13 ms  2351.99 ms        1/400  599/600
+        10000   50000   37.98 ms   56.58 ms   69.11 ms    57.77 ms  3018.90 ms        1/400  599/600
+        10000   50000   37.97 ms   55.57 ms   77.31 ms    47.19 ms  2627.70 ms        1/400  599/600
+        10000   50000   50.00 ms   57.26 ms   86.69 ms    82.74 ms  5690.77 ms        1/400  599/600
+        10000   50000   37.49 ms   39.79 ms   59.77 ms    41.79 ms  2291.21 ms        1/400  599/600
+        10000   50000   37.50 ms   39.80 ms   53.00 ms    45.04 ms  2392.90 ms        1/400  599/600
+        10000   50000   38.02 ms   41.10 ms   49.44 ms    42.18 ms  2311.42 ms        1/400  599/600
+        10000   50000   37.47 ms   39.89 ms   51.37 ms    42.03 ms  2244.69 ms        1/400  599/600
+        10000   50000   37.85 ms   40.52 ms   59.31 ms    41.80 ms  2422.49 ms        1/400  599/600
+```
+
+Na adaptéru je QC-1 p95 39,8–57,3 ms v 10 z 10 běhů (rezerva ≥ 43 %),
+nejhorší jednotlivé potvrzení 89 ms. Bezprostředně před měřením běžel
+notebook na baterii. Stav napájení u běhů z 2026-10-26 zapsaný není, proto
+je napájení (škrcení CPU na baterii) **pravděpodobná, ne ověřená** příčina
+odlehlého běhu 150 ms. Pravidlo pro další měření: na adaptéru a se
+zapsaným stavem napájení.
+
 „2-proc max“ je nejdelší *úspěšné* potvrzení. Že může přesáhnout 5 s,
 pravděpodobně způsobuje to, že busy handler SQLite započítává do timeoutu
 součet svých plánovaných uspání, ne skutečně uplynulý čas (neověřeno).
@@ -326,8 +354,8 @@ součet svých plánovaných uspání, ne skutečně uplynulý čas (neověřeno
 
 | Criterion | Naměřeno (10 000/místo) | Výsledek |
 |---|---|---|
-| QC-1 p95 ≤ 100 ms | Linux 77–80 ms ve 4 bězích (C04) a 30–50 ms ve 4 bězích (2026-11-02); Windows 46–67 ms v 5 bězích ze 6, jeden běh 150 ms (max 786 ms); hodnotitelé C06 na Windows 94,7 ms | **splněno v 13 ze 14 vlastních běhů**; jeden odlehlý běh, příčina neověřená. Rezerva na Windows hodnotitelů jen 5 %. Při 50 000/místo 230 ms |
-| QC-2 0 chyb zámku ze 400 souběžných | Windows 1–2/400 v každém ze 6 běhů; Linux 1/400 v každém ze 4 běhů; hodnotitelé C06 2–3/400 | **nesplněno**. Při 1 000/místo 0/400 (náš běh i hodnotitelé), při 50 000/místo 7/400 |
+| QC-1 p95 ≤ 100 ms | Linux 77–80 ms ve 4 bězích (C04) a 30–50 ms ve 4 bězích (2026-11-02); Windows 2026-10-26 46–67 ms v 5 bězích ze 6, jeden běh 150 ms (max 786 ms); Windows 2026-11-02 na adaptéru 40–57 ms v 10 z 10 běhů; hodnotitelé C06 na Windows 94,7 ms | **splněno ve 23 ze 24 vlastních běhů**; odlehlý běh pravděpodobně na baterii (neověřeno). Rezerva na Windows hodnotitelů jen 5 %. Při 50 000/místo 230 ms |
+| QC-2 0 chyb zámku ze 400 souběžných | Windows 1–2/400 v každém ze 16 běhů; Linux 1/400 v každém ze 4 běhů; hodnotitelé C06 2–3/400 | **nesplněno**. Při 1 000/místo 0/400 (náš běh i hodnotitelé), při 50 000/místo 7/400 |
 
 Co měření ukázalo navíc:
 - čas roste s počtem rezervací místa, ne s SQL dotazem. Index na
@@ -365,10 +393,10 @@ Co měření ukázalo navíc:
   a intervalu.
 
 **Zbývající mezery:** QC-2 se správnou zátěží je měřené na jednom stroji
-s Windows a jednom s Linuxem, oba lokální SSD; síťový disk měřen není. Jeden
-běh QC-1 na Windows (150 ms) a rozdíl mezi linuxovými měřeními (77–80 ms
-proti 30–50 ms) jsou nevysvětlené. Historie je syntetická a objem je
-předpoklad, ne údaj provozu.
+s Windows a jednom s Linuxem, oba lokální SSD; síťový disk měřen není. Běh
+QC-1 na Windows 150 ms má jen pravděpodobné vysvětlení (napájení z baterie,
+C07 P2); rozdíl mezi linuxovými měřeními (77–80 ms proti 30–50 ms) je
+nevysvětlený. Historie je syntetická a objem je předpoklad, ne údaj provozu.
 
 ## C05 — Detailed Design Evidence
 
@@ -504,7 +532,8 @@ popisuje skutečné a zdůvodněné chování, nikdy ne podle chybného kódu.
   1 000 rezervací na místo.
 - **Časová zóna jen jako precondition.** HTTP adaptér z CP1 musí převést
   vstup na aware UTC. Jinak dostane klient `TypeError` (chyba 500) místo
-  chyby pravidla.
+  chyby pravidla. *C07: ošetřeno v `http_api.py` (`1670c5c`), čas bez
+  offsetu je 400, test `test_time_without_utc_offset_is_400_and_nothing_is_stored`.*
 - **`approve` neověřuje `requires_approval` znovu.** Když se katalog změní
   mezi confirm a approve, rozhoduje stav žádosti, ne aktuální místo.
 - **Hláška kolize obsahuje id cizí rezervace.** Dnes GUI ukazuje všechny
@@ -552,12 +581,55 @@ ostatní testy projdou. Skript měří 2 procesy × 200, chyby počítá jen ze
 souběžných potvrzení a solo běh hlásí zvlášť. Připomínka bez změny kódu: když
 proces měření spadne před bariérou (např. `StoreBusy` při vytváření `DRAFT`),
 skript se zablokuje. Týká se jen měření, ne aplikace; zatím se to nestalo.
+Opraveno v `322bc58` (viz „C07 — Otevřené položky po review“).
+
+## C07 — Otevřené položky po review (2026-11-02)
+
+**Čistý checkout na Windows** (doplnění k R-03): `git clone` větve `main` na
+`63cbc0e`, příkazy z README pro PowerShell
+(`$env:PYTHONPATH = "src"; python -m unittest discover -s tests`) →
+`Ran 80 tests in 2.501s — OK`, žádný přeskočený. Windows 11 IoT Enterprise
+LTSC 10.0.26100, Python 3.14.3, SQLite 3.50.4.
+
+**Měřicí skript se už nezablokuje** (připomínka z review, `322bc58`): proces,
+který selže, to ohlásí rodiči a zruší bariéru, takže druhý proces nečeká
+navždy; bariéra má navíc timeout a rodič pozná i proces, který skončil bez
+výsledku. Měření pak skončí `RuntimeError` s popisem. Ověřeno ručně:
+dvě zdravé instance měří dál; jedna instance neotevře databázi → chyba po
+0,3 s; obě dostanou `StoreBusy` při vytváření `DRAFT` → chyba po 5,8 s.
+
+**HTTP API, CP1 walking skeleton** (R-04, `1670c5c`). Tým rozhodl, že CP2
+zahrnuje HTTP klienta, takže R-04 přešlo z AVOID na MITIGATE. `http_api.py`
+je tenký klient nad `ReservationService` jako GUI (ADR-04, AD-04, D5):
+
+```
+POST /reservations {place_id, user_id, start, end} -> 201 {id, state: "DRAFT"}
+GET  /reservations/<id>                           -> 200 uložená rezervace
+400 vadný požadavek nebo čas bez UTC offsetu, 422 porušené pravidlo,
+503 + Retry-After při StoreBusy, 404 neznámé id nebo cesta
+```
+
+Každý požadavek otevře vlastní službu a spojení jako další instance v G4,
+takže zámek SQLite řadí i API proti GUI. Čas bez offsetu je 400, ne
+`TypeError` (riziko C05 „Časová zóna jen jako precondition“ je tím pro HTTP
+ošetřené). Architektonický test hlídá oba klienty (`gui.py`, `http_api.py`).
+Spuštění: `python3 run_api.py [parking.db] [--port 8000]`.
+
+Testy `tests/test_http_api.py` (8): kontrola z README end to end (POST →
+`DRAFT` → GET podle id), služba na straně GUI potvrdí rezervaci vytvořenou
+přes HTTP, převod offsetu na UTC, 400 pro čas bez offsetu / vadný JSON /
+chybějící pole (nic se neuloží), 422 pro BR-04 a neznámé místo, 404.
+Mutace: import repozitáře v `http_api.py` shodí architektonický test;
+bez kontroly offsetu spadne test 400. Ručně: `run_api.py` + `curl` POST/GET.
+
+Testy celkem: `Ran 88 tests — OK` (80 + 8 pro HTTP API).
 
 ## C07 — Risk register
 
 Klasifikace před ošetřením: L a I 1–3, priorita L × I (1–2 LOW, 3–4
 MEDIUM, 6–9 HIGH). Actual residual se snižuje jen s ověřeným opatřením,
-jinak NOT VERIFIED. Stav k 2026-11-02, nad `0c263f0` (merge C07 do `main`).
+jinak NOT VERIFIED. Stav k 2026-11-02, větev `c07-open-items` (nad
+`63cbc0e`).
 
 ### R-01
 - statement: Implementaci a evidenci C02–C04 (`service.py`, `test_concurrency.py`, `confirm_latency.py`; 24 ze 40 commitů) napsal hlavně jeden člen → při jeho nedostupnosti nikdo jiný neopraví nálezy ani nezopakuje měření → uzavření C06 findings a příprava CP2 se zpozdí.
@@ -568,7 +640,7 @@ jinak NOT VERIFIED. Stav k 2026-11-02, nad `0c263f0` (merge C07 do `main`).
 - evidence: F1 a F2 opravil R. Gřegoř (`3021f97`, `ffb9c70`), měření proběhlo na jeho stroji s Windows. Review autorem původního kódu: O. Malinák 2026-11-02 (viz C06), včetně čistého checkoutu, testů a měření na Linuxu.
 - expected: L=1, I=2 → LOW (2)
 - actual: L=1, I=2 → LOW (2) – oprava i měření jiným členem a review proběhly; zastupitelnost je ověřená na opravách F1 a F2.
-- acceptance: čeká na přijetí R. Gřegořem za tým.
+- acceptance: přijato R. Gřegořem za tým, rozhodnuto 2026-10-30 s podmínkou review; podmínka splněna review O. Malináka 2026-11-02.
 - monitor: trigger – PR k opravě bez review od jiného člena nebo selhání čistého buildu; přezkum na C08.
 
 ### R-02
@@ -589,23 +661,23 @@ jinak NOT VERIFIED. Stav k 2026-11-02, nad `0c263f0` (merge C07 do `main`).
 - initial: L=2, I=2 → MEDIUM (4); hodnotitelé na Windows naměřili QC-1 p95 94,7 ms (rezerva 5 %).
 - strategy: MITIGATE
 - plan: README s PowerShell příkazy; měření i na Windows, výsledky uvádět po prostředích. Owner: R. Gřegoř.
-- evidence: README doplněno; C04 přeměřeno na Windows podle README (C04 výše). Chybí doložený výstup 80 testů na Windows: hodnotitelé C06 ověřili na Windows baseline se 78 testy, u běhu 80 testů prostředí uvedené není. Doplní R. Gřegoř.
+- evidence: README doplněno; čistý checkout `63cbc0e` podle README na Windows: 80 testů OK (viz „C07 — Otevřené položky po review“). QC-1 na Windows: 2026-10-26 5 z 6 běhů 46–67 ms a jeden 150 ms; 2026-11-02 na adaptéru 10 z 10 běhů 40–57 ms (C04 výše). Trigger (> 90 ms) nastal během 150 ms; příčina je pravděpodobně napájení z baterie (neověřeno).
 - expected: L=1, I=2 → LOW (2)
-- actual: MEDIUM (4) – README je opravené, ale QC-1 na Windows není stabilní: 5 z 6 běhů 46–67 ms, jeden 150 ms, hodnotitelé 94,7 ms. Trigger (> 90 ms) tím nastal; další krok je zjistit příčinu odlehlého běhu.
-- acceptance: R. Gřegoř; contingency: obhajovat na stroji, kde je měření doložené.
-- monitor: trigger – p95 QC-1 > 90 ms na kterémkoli vykázaném stroji (rezerva < 10 %).
+- actual: LOW (2) – spuštění podle README ověřené čistým checkoutem, QC-1 na Windows na adaptéru stabilně s rezervou ≥ 43 %. Platí s podmínkou měřit a obhajovat na adaptéru; výsledek hodnotitelů 94,7 ms (jiný stroj) zůstává jako upozornění.
+- acceptance: R. Gřegoř za tým, 2026-11-02; contingency: obhajovat na stroji, kde je měření doložené, a na síťovém napájení.
+- monitor: trigger – p95 QC-1 > 90 ms na kterémkoli vykázaném stroji (rezerva < 10 %) při měření na adaptéru; u každého měření zapsat stav napájení.
 
 ### R-04
 - statement: README plánuje HTTP adaptér (CP1 walking skeleton, AD-04), který neexistuje; DD-4 předpokládá vstup jako aware UTC → adaptér psaný těsně před CP2 → `TypeError` místo chyby pravidla, neověřený druhý proces nad SQLite, nehotová demonstrace.
 - category: Schedule / Integration
 - initial: L=2, I=2 → MEDIUM (4); adaptér nezačat, termín CP2 v plánu týmu chybí.
-- strategy: AVOID (návrh) – pokud HTTP není v rozsahu CP2, zůstává GUI jediným klientem; jinak MITIGATE (tenký adaptér + 1 E2E test).
-- plan: rozhodnout s cvičícím na C08. Owner: R. Gřegoř.
-- evidence: k 2026-11-02 žádná. Rozhodnutí HTTP ano/ne nepadlo a termín CP2 tým nezná; plán týmu v repu není.
-- expected: AVOID: L=1, I=1 → LOW (1)
-- actual: NOT VERIFIED – rozhodnutí ani termín CP2 nejsou zapsané (otevřené).
-- acceptance: tým + cvičící.
-- monitor: trigger – cvičící potvrdí HTTP v rozsahu CP2.
+- strategy: MITIGATE – tým 2026-11-02 rozhodl, že CP2 zahrnuje HTTP klienta (původní návrh AVOID tím odpadl).
+- plan: tenký adaptér nad `ReservationService` + E2E test hned, ne těsně před CP2. Owner: R. Gřegoř.
+- evidence: `1670c5c` – `POST /reservations` a `GET /reservations/<id>`, 8 testů v `test_http_api.py` včetně kontroly z README a času bez offsetu (400); architektonický test hlídá i `http_api.py` (viz „C07 — Otevřené položky po review“).
+- expected: L=1, I=2 → LOW (2)
+- actual: LOW (2) – adaptér je integrovaný a ověřený testy. Termín CP2 tým dál nezná (planning gap ve status reportu, ne toto riziko).
+- acceptance: R. Gřegoř za tým, 2026-11-02.
+- monitor: trigger – CP2 bude požadovat další operace přes HTTP (confirm, approve, cancel) nebo přihlášení; pak nové rozhodnutí o rozsahu a R-05.
 
 ### R-05
 - statement: Role se neověřují (C03 F6) a hláška kolize ukazuje id cizí rezervace → při víceuživatelském provozu schválí VIP žádost neoprávněná osoba → obejití schvalování v0.2.
@@ -613,13 +685,14 @@ jinak NOT VERIFIED. Stav k 2026-11-02, nad `0c263f0` (merge C07 do `main`).
 - initial: L=1, I=2 → LOW (2); lokální aplikace, přihlášení C01–C05 nevyžaduje.
 - strategy: ACCEPT
 - plan: žádné opatření pro CP2.
-- evidence: nic k ověření.
+- evidence: 2026-11-02 trigger nastal (přibyl HTTP klient, R-04) a riziko je přehodnocené: API poslouchá ve výchozím stavu jen na `127.0.0.1` a umí jen vytvořit `DRAFT` a přečíst rezervaci podle id; approve, reject ani cancel přes HTTP nejdou. Nová expozice je jen čtení cizí rezervace (vč. `user_id`) pro toho, kdo zná její id.
 - expected: LOW (2)
-- actual: LOW (2), přijato.
-- acceptance: tým; důvod: CP2 nepožaduje přihlášení.
-- monitor: trigger – přibude přihlášení, HTTP klient nebo víc uživatelů nad jednou DB.
+- actual: LOW (2), přijato i po přehodnocení (L=1, I=2).
+- acceptance: tým; důvod: CP2 nepožaduje přihlášení, rozhodující operace zůstávají v GUI.
+- monitor: trigger – přihlášení, HTTP operace měnící stav (approve, cancel), API dostupné mimo `127.0.0.1` nebo víc uživatelů nad jednou DB.
 
 ### Issues (už nastaly, nejsou rizika)
 - I-01 = C06 F2 (P1) – uzavřeno `3021f97`.
 - I-02 = C06 F1 (P2) – uzavřeno `ffb9c70` + přeměření v C04 (`da3d858`).
 - I-03 drobné nekonzistence dokumentace (viz C06 „Drobnosti z formuláře“) – opraveno v `da3d858`; zkontrolováno 2026-11-02 (commit v C04, 80 testů, PowerShell v README, „Proč tato úroveň“, poznámka k L1).
+- I-04 měřicí skript se mohl zablokovat (připomínka z review C07) – opraveno `322bc58`.
