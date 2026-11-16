@@ -147,16 +147,31 @@ verification):
 car per charger per day, which defeats the purpose of the installation.
 Option C is the only no-code compensation and does not meet the need.
 
-**Peer reviewer and challenged assumption.** *PENDING – to be done by a
-team member other than the author:* name, date, which assumption was
-challenged (suggested: "BR-06 only at Create is enough, no path changes the
-interval later" and "the rollback limitation is acceptable"), outcome.
+**Peer reviewer and challenged assumption.** Review of the decision and of
+the C09 diff at `11e385d` (reviewer: Ondrej M, 2026-11-16).
+
+- *Assumption 1: "BR-06 only at Create is enough."* Checked: no path in
+  `service.py`, `http_api.py` or `gui.py` changes `start`/`end` after Create,
+  so the assumption holds. It holds only because no edit of the interval
+  exists; any future "change reservation" operation must re-check the place's
+  `max_duration`. The rule lives only in `domain.create_reservation`; the
+  database does not enforce it, so a direct SQL write could store a longer
+  `p6` reservation. Accepted: no such writer path exists (no worker, import
+  or admin interface), as with BR-04.
+- *Assumption 2: "the rollback limitation is acceptable."* Accepted as a
+  documented limitation, not as solved: rolling back the code with `p6` rows
+  present needs manual deletion of those rows (see C09 rollback). It stays a
+  residual risk in the release record.
+- *Other checks:* AC-01..AC-06 map to tests including 4 h / 4 h + 1 s / 4 h 1
+  min; Expected values of TC-C08-01/02 were committed before the run
+  (`8618470`, results in `d5e2387`); `check.py` at `11e385d`: 103 tests, PASS.
+- *Outcome:* ACCEPT of option A supported, with the notes above.
 
 **Decision.** **ACCEPT option A** (proposed by the owner R. Gřegoř,
 2026-11-16). Rationale: meets all ACs with the smallest delta, keeps one
 copy of the duration rule, no schema migration. B is postponed until the
 deferred EV-user rule is decided; C does not meet AC-02. The decision is
-final after the peer review above.
+reviewed above.
 
 **Hand-off to C09** (bounded delta and test oracles):
 

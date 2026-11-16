@@ -752,9 +752,9 @@ rozhodnutí: `docs/intent-and-change.md`, sekce „C08 / CR-08“.
 |---|---|---|---|
 | 1 | nový soubor DB, vytvořit a potvrdit B1, vytvořit B2 | jen B1 `CONFIRMED`, B2 `DRAFT` | B1 `CONFIRMED`, B2 `DRAFT` |
 | 2 | nezávisle přečíst intervaly a stavy | B1 končí 11:00, B2 začíná 11:00; žádná jiná `CONFIRMED` | `[('…T10:00…', '…T11:00…', 'CONFIRMED'), ('…T11:00…', '…T12:00…', 'DRAFT')]` |
-| 3 | `service.confirm(B2)` | vráceno `CONFIRMED` |
-| 4 | nové spojení, přečíst uložený stav | B1 i B2 `CONFIRMED`, intervaly [10,11) a [11,12) |
-| 5 | celé znovu z nového souboru | běh 2 dal totožné řádky i výsledek |
+| 3 | `service.confirm(B2)` | uspěje, vrátí `CONFIRMED` | vráceno `CONFIRMED` |
+| 4 | nové spojení, přečíst uložený stav | B1 i B2 `CONFIRMED`, bez překryvu | B1 i B2 `CONFIRMED`, intervaly [10,11) a [11,12) |
+| 5 | celé znovu z nového souboru | stejný výsledek | běh 2 dal totožné řádky i výsledek |
 
 ### TC-C08-02 — překrývající se potvrzení je odmítnuto, nic se nezmění
 
@@ -769,11 +769,11 @@ rozhodnutí: `docs/intent-and-change.md`, sekce „C08 / CR-08“.
 
 | # | Akce | Expected (před během) | Actual (po běhu) |
 |---|---|---|---|
-| 1 | nový soubor DB, B1 `CONFIRMED`, B2 `DRAFT` | B1 `CONFIRMED`, B2 `DRAFT` |
-| 2 | nezávisle přečíst výchozí stav | `[('…T10:00…', '…T11:00…', 'CONFIRMED'), ('…T10:30…', '…T11:30…', 'DRAFT')]` |
-| 3 | `service.confirm(B2)` | `RuleViolation: confirmed reservations for the same place must not overlap; conflicts with <id B1>` |
-| 4 | nové spojení, přečíst uložený stav | totožný s krokem 2 (porovnání celých řádků) |
-| 5 | celé znovu z nového souboru | běh 2 dal totožné řádky i výsledek |
+| 1 | nový soubor DB, B1 `CONFIRMED`, B2 `DRAFT` | jen B1 `CONFIRMED` | B1 `CONFIRMED`, B2 `DRAFT` |
+| 2 | nezávisle přečíst výchozí stav | intervaly se překrývají, `CONFIRMED` je jen B1 | `[('…T10:00…', '…T11:00…', 'CONFIRMED'), ('…T10:30…', '…T11:30…', 'DRAFT')]` |
+| 3 | `service.confirm(B2)` | `RuleViolation`, hláška obsahuje id B1 | `RuleViolation: confirmed reservations for the same place must not overlap; conflicts with <id B1>` |
+| 4 | nové spojení, přečíst uložený stav | totožný s krokem 2: B1 `CONFIRMED`, B2 `DRAFT` | totožný s krokem 2 (porovnání celých řádků) |
+| 5 | celé znovu z nového souboru | stejný výsledek | běh 2 dal totožné řádky i výsledek |
 
 **Co testy nepokrývají:** souběžné Confirm (REQ-04, zvlášť v
 `test_concurrency.py`), Approve na místě se schválením, GUI samotné.
@@ -811,8 +811,8 @@ není, ten ověřuje `test_concurrency.py`.
 
 **C08 Change Card a rozhodnutí:** `docs/intent-and-change.md`, „C08 / CR-08“
 – ACCEPT varianty A (limit délky jako vlastnost místa), navrženo vlastníkem
-R. Gřegořem 2026-11-16. **Peer review rozhodnutí zatím chybí** (viz níže),
-proto implementace postupuje s vědomím, že review ji může vrátit.
+R. Gřegořem 2026-11-16. **Peer review rozhodnutí:** Ondrej M, 2026-11-16, ACCEPT
+podpořen s poznámkami (`docs/intent-and-change.md`).
 
 **Before / after:** before = `743fb2a`. Kód CR-08 = `d4e7cc5`, automatizace
 = `8969cf5`, oprava z C10 = `f4e98b6`, test GUI pro AC-06 a aktualizace
