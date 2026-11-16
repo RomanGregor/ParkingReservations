@@ -868,7 +868,7 @@ jen při Create, hláška chyby, omezení rollbacku níže, oprava z C10
 | C10 oprava (I-05) | C10 pokus 3a/3b, D4 | `tests/test_c10_operations.py` (4) + `c10_operations.py` běh 2 | zamčeno → `StoreBusy`/503, nedostupné → `StoreUnavailable`/503 + ERROR | odpovídá | PASS | C10 níže |
 | celá sada | dosavadní tvrzení C02–C07 | `python check.py` | 0 selhání | 103 testů, 0 selhání, 0 přeskočeno | PASS | níže |
 | QC-1 / QC-2 po změně (Impact „měření“) | C04: p95 ≤ 100 ms; D4 | `confirm_latency.py --history 10000 --runs 200` na `8969cf5` (kód CR-08), na adaptéru, jeden běh | QC-1 dál splněno; QC-2 v rozsahu C04 | QC-1 p95 41,24 ms (60 000 řádků = 6 míst); QC-2 1/400, nejdelší úspěšné potvrzení 2,77 s | PASS | výpis níže |
-| Python 3.12 (README „3.12+“) | README | – | – | – | NOT RUN | lokálně jen 3.11 a 3.14; pokryje CI matrix |
+| Python 3.12 (README „3.12+“) | README | CI: `python check.py` na Ubuntu a Windows, Python 3.12 | exit 0 | job `success` na obou OS | PASS (jen exit kód, počty testů viz CI níže) | CI run 43864843441 |
 
 **Umí nové testy selhat?** Na kódu `743fb2a` se `test_cr08_ev_place.py`
 nenačte (`parking place does not exist` pro `p6`). Mutace (globální limit
@@ -896,7 +896,24 @@ commit, Python, SQLite, OS; byte-compile `src/`, `tests/`, `measurements/` a
 skriptů; spustí všechny testy; vypíše přeskočené; exit 0 jen při úspěchu.
 Ověřeno, že selhání testu dá `result: FAIL (exit 1)` a exit kód 1.
 CI: `.github/workflows/check.yml` spouští totéž na Ubuntu a Windows
-s Pythonem 3.12 a 3.14 – **PLANNED / NOT RUN**, dokud větev není pushnutá.
+s Pythonem 3.12 a 3.14. **Proběhlo** po pushi větve (2026-11-16 12:15 UTC),
+commit `31a9ba5` (kód = RC `11e385d`, potom už jen dokumentace):
+https://github.com/RomanGregor/ParkingReservations/actions/runs/43864843441
+
+| Job | Výsledek | Trvání |
+|---|---|---|
+| ubuntu-latest, 3.12 | success | 14 s |
+| ubuntu-latest, 3.14 | success | 14 s |
+| windows-latest, 3.12 | success | 29 s |
+| windows-latest, 3.14 | success | 31 s |
+
+Ověřeno přes GitHub API bez přihlášení: stav a výsledek jobů a kroků
+(`python check.py --log check.log` = success, tj. exit 0 = build OK a 0
+selhání). Logy jobů a artefakty `check.log` vyžadují přihlášení (HTTP 403),
+takže počty spuštěných a přeskočených testů jsme z CI **nepřečetli**.
+Na Ubuntu nejspíš chybí displej a GUI testy (`EvPlaceInGui`, test z C06 F2)
+se přeskočí; neověřeno. Doplnit z artefaktu `check-*` řádek `tests run: …,
+skipped: …`.
 
 ```
 commit:  11e385d7e5c9b35f9a6c50a46b566fdcd4122aed
@@ -945,15 +962,15 @@ nebo nechat `p6` v katalogu staré verze. Automatizované to není. Schéma je
 v obou verzích stejné, takže jinak je DB zpětně kompatibilní.
 
 **Reziduální rizika:** EV-only uživatelé (DEFER); rollback viz výše;
-review a nezávislá reprodukce chybí; CI neběželo.
+review a nezávislá reprodukce chybí; v CI neznáme počet přeskočených testů.
 
 **Release decision: HOLD** (owner R. Gřegoř, 2026-11-16). Automatické
 testy, integrace přes HTTP + SQLite, měření i čistý checkout autorem prošly.
 Chybí ale peer review rozhodnutí C08 i diffu a reprodukce jiným členem; obojí
 je v C09 povinné. Změna na READY, až: (1) review zapsané výše bez
 nevyřešených nálezů, (2) jiný člen zopakuje čistý checkout `11e385d` s PASS,
-(3) po pushi CI zelené (nebo zapsaný důvod, proč neběží). Zelené testy
-nejsou povolení k nasazení.
+(3) po pushi CI zelené – **splněno** 2026-11-16 (4/4 joby, viz výše). HOLD
+tedy dál drží jen (1) a (2). Zelené CI není povolení k nasazení.
 
 ## C10 — Provozní situace a logy
 
