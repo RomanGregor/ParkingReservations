@@ -8,7 +8,8 @@ Navazuje na Project Frame z C01 (`docs/intent-and-change.md`).
 - **`now`** = čas serveru v UTC. Všechny časové podmínky se vyhodnocují vůči němu.
 
 Část A je baseline v0.1 (čtyři základní operace). Část B popisuje změnu
-„schvalovací proces“ a výslednou baseline v0.2.
+„schvalovací proces“ a výslednou baseline v0.2. Část C je změna CR-08
+(EV nabíjecí místo, C08/C09) a baseline v0.3.
 
 ---
 
@@ -591,6 +592,41 @@ flowchart TD
 | Případy užití vs. text | Nový cíl Approve / Reject má operaci OP-05. Vypršení je přechod bez aktéra. |
 
 **Stav: Specification Baseline v0.2 — schválená týmem.**
+
+---
+
+## C. Změna CR-08 — EV nabíjecí místo (v0.3)
+
+Change Card, dopady a rozhodnutí: `docs/intent-and-change.md`, „C08 / CR-08“.
+
+**BR-06 — EV nabíjecí místo nejvýš 4 hodiny.** Na místě typu EV (v aplikaci
+`EV-01`, id `p6`) platí `end - start <= 4 h`. Hranice je včetně, stejně jako
+u BR-04. Na ostatních místech platí dál BR-04 (24 h). Pravidlo se kontroluje
+při Create; interval rezervace se potom už nemění. EV místo nevyžaduje
+schválení.
+
+> **REQ-01 (v0.3):** Pro existující místo a platný interval systém vytvoří
+> novou rezervaci ve stavu `DRAFT`. Interval je platný, když `start < end`
+> (BR-01), `end - start` nepřekročí limit místa (24 h podle BR-04, na EV
+> místě 4 h podle BR-06) a `start >= now + 1 h` (BR-05).
+
+**Příklady ověření** (`now` = 06:00, místo `EV-01`):
+
+| Vstup | Výsledek |
+|---|---|
+| 08:00–10:00 | `DRAFT` |
+| 08:00–12:00 (přesně 4 h) | `DRAFT` (hranice) |
+| 08:00–12:00:01 (4 h + 1 s) | zamítnuto, nic se neuloží |
+| 08:00–12:01 | zamítnuto, hláška uvádí limit 4 hodiny |
+| 08:00 – 08:00 další den na `A-01` | `DRAFT` (BR-04 beze změny) |
+
+**Beze změny:** stavy a stavový diagram, BR-01..BR-05, REQ-02..REQ-08, OP-02
+až OP-05. BR-02 platí na EV místě stejně jako na každém místě bez schválení.
+
+**Mimo rozsah (DEFER):** „jen pro uživatele s elektromobilem“. Systém nemá
+model uživatele ani přihlášení (C07 R-05).
+
+**Stav: Specification Baseline v0.3 — návrh, čeká na peer review CR-08.**
 
 ---
 

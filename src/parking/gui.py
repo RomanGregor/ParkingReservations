@@ -43,6 +43,8 @@ class App(tk.Tk):
                   foreground="#555").grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(form, text="Start must be at least 1 hour from now — no reservations in the past.",
                   foreground="#555").grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Label(form, text="At most 24 hours; EV-* charging places at most 4 hours.",
+                  foreground="#555").grid(row=6, column=0, columnspan=2, sticky="w")
 
         buttons = ttk.Frame(self, padding=(10, 0))
         buttons.grid(row=1, column=0, sticky="ew")

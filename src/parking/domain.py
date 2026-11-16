@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from uuid import uuid4
 
-MAX_DURATION = timedelta(hours=24)  # BR-04: domain-specific rule from C01
+MAX_DURATION = timedelta(hours=24)  # BR-04: domain-specific rule from C01, default of every place
+EV_MAX_DURATION = timedelta(hours=4)  # BR-06 (C08 CR-08): an EV charging place is not long-term parking
 MIN_LEAD_TIME = timedelta(hours=1)  # BR-05: a reservation must start in the future
 
 
@@ -37,6 +38,7 @@ class ParkingPlace:
     id: str
     label: str
     requires_approval: bool = False  # OP-05: place-level approval requirement
+    max_duration: timedelta = MAX_DURATION  # BR-04 by default; BR-06 for EV charging places
 
 
 @dataclass
@@ -73,14 +75,19 @@ class AvailabilityResult:
 def create_reservation(place: ParkingPlace, user: User, start: datetime, end: datetime, now: datetime) -> Reservation:
     """OP-01 Create Reservation: records intent, does not allocate the place.
 
+    BR-04 / BR-06: at most the place's `max_duration` (inclusive), 24 h
+    unless the place says otherwise. Checked only here: the interval of a
+    reservation never changes after Create.
+
     BR-05: start must be at least MIN_LEAD_TIME in the future relative to
     `now` — a Driver cannot request a reservation that starts in the past
     or immediately, since nobody could act on it (confirm/approve) in time.
     """
     if end <= start:
         raise RuleViolation("end must be after start")
-    if end - start > MAX_DURATION:
-        raise RuleViolation("a parking place can be reserved for at most 24 hours")
+    if end - start > place.max_duration:
+        hours = place.max_duration / timedelta(hours=1)
+        raise RuleViolation(f"parking place {place.label} can be reserved for at most {hours:g} hours")
     if start < now + MIN_LEAD_TIME:
         raise RuleViolation("reservation must start at least 1 hour from now")
     return Reservation(place.id, user.id, start, end)

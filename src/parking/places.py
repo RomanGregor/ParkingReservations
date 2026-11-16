@@ -1,8 +1,9 @@
 """Place Catalog: the parking places and their properties (C03, ADR-04)."""
-from parking.domain import ParkingPlace, RuleViolation
+from parking.domain import EV_MAX_DURATION, ParkingPlace, RuleViolation
 
 PLACES = [ParkingPlace(f"p{i}", f"A-{i:02d}") for i in range(1, 5)] + [
     ParkingPlace("p5", "VIP-01", requires_approval=True),
+    ParkingPlace("p6", "EV-01", max_duration=EV_MAX_DURATION),  # C08 CR-08, BR-06
 ]
 
 
