@@ -787,3 +787,30 @@ bězích. Test tedy BR-02 při Confirm skutečně hlídá.
 **Limit důkazu:** jde o integraci služba → SQLite soubor ve stejném procesu;
 GUI ani HTTP (Confirm přes HTTP neexistuje) se neprocházely. Souběh tu
 není, ten ověřuje `test_concurrency.py`.
+
+## C10 — Provozní situace a logy
+
+### Plán a očekávání (zapsáno před pokusy)
+
+**Prostředí:** lokálně, jednorázová DB `c10/data/c10.db` v dočasném
+adresáři (ne `parking.db` projektu), HTTP API `run_api.py c10/data/c10.db
+--port 8766`, stderr serveru (sem jde `logging`) zachycený do souboru.
+Testovací uživatelé `c10-driver-1`, `c10-driver-2`, žádné osobní údaje,
+žádná hesla ani tokeny (aplikace žádné nemá).
+
+**Omezení rozhraní:** HTTP API umí jen Create a čtení podle id. Confirm má
+jen GUI, které volá `ReservationService.confirm`. Pokusy 1 a 2 proto
+potvrzují tímto voláním v samostatném procesu nad stejným souborem (jako
+druhá instance v G4); vytvoření a čtení jde přes HTTP. Stav se vždy ověřuje
+vlastním čtením souboru přes `sqlite3`, ne z logu.
+
+| # | Situace | Postup | Expected (před během) |
+|---|---|---|---|
+| 1 | Úspěšné potvrzení | POST `p1` [+3 h, +5 h) → `service.confirm(id)` → GET + čtení DB | 201 `DRAFT`; confirm vrátí `CONFIRMED`; GET i DB `CONFIRMED`. Log: řádky přístupu POST 201 a GET 200, notifikace `... is now CONFIRMED`. Log úspěchu navíc není potřeba. |
+| 2 | Zamítnutá kolize | POST `p1` [+4 h, +6 h) → `service.confirm(id)` → čtení DB | 201 `DRAFT`; confirm `RuleViolation` s id rezervace z pokusu 1; DB: první `CONFIRMED`, druhá `DRAFT`. V logu nic o zamítnutí. |
+| 3a | Výpadek úložiště | za běhu API přejmenovat adresář `data` → POST → adresář vrátit → POST | během výpadku: chybová odpověď serveru, nic uloženo, server běží dál; v logu čas, operace a typ chyby. Po obnovení 201 a DB obsahuje řádky z 1–2 + nový. |
+| 3b | DB zamčená jiným procesem | jiný proces drží `BEGIN EXCLUSIVE` 8 s → POST | po ~5 s (`LOCK_TIMEOUT`) 503 + `Retry-After: 1`, nic uloženo; po uvolnění zámku POST 201. V logu stav 503. |
+| 4 | Restart aplikace | ukončit proces API (tvrdé ukončení) → znovu spustit nad stejnou DB → GET rezervace z 1 → POST | po startu GET `CONFIRMED` beze změny; nový POST 201. V logu dvakrát řádek startu `HTTP API on ...`; zastavení v logu vidět nebude (tvrdé ukončení). |
+
+Pokud v pokusu 3 chybí čas, operace nebo typ chyby, doplníme jeden
+minimální logovací záznam a pokus zopakujeme (zadání C10).
