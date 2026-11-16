@@ -24,12 +24,30 @@ class StoreBusy(Exception):
     """The write lock was not obtained within LOCK_TIMEOUT; nothing was changed."""
 
 
+class StoreUnavailable(Exception):
+    """The database file could not be opened or used (C10), e.g. its directory is gone."""
+
+
 class ReservationRepository:
     def __init__(self, path: str, lock_timeout: float = LOCK_TIMEOUT):
         # Autocommit mode: single statements commit on their own and
         # `transaction` opens its transactions explicitly.
-        self._db = sqlite3.connect(path, isolation_level=None, timeout=lock_timeout)
-        self._db.execute(_SCHEMA)
+        # C10: opening is the first contact with the database, so its failures
+        # get the same explicit outcomes as a transaction instead of a raw
+        # sqlite3 error: an exclusive lock held by another connection blocks
+        # even the schema check (StoreBusy, D4); a file that cannot be opened
+        # is StoreUnavailable. Nothing has been read or written in either case.
+        try:
+            self._db = sqlite3.connect(path, isolation_level=None, timeout=lock_timeout)
+        except sqlite3.Error as e:
+            raise StoreUnavailable(f"cannot open the reservation store: {e}") from e
+        try:
+            self._db.execute(_SCHEMA)
+        except sqlite3.Error as e:
+            self._db.close()
+            if "locked" in str(e):
+                raise StoreBusy("the reservation store is busy, try again") from e
+            raise StoreUnavailable(f"cannot use the reservation store: {e}") from e
 
     def close(self) -> None:
         self._db.close()

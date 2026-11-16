@@ -7,6 +7,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
@@ -18,5 +19,8 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+    # C10: log times in UTC with a Z, like every time in the database (D3).
+    logging.Formatter.converter = time.gmtime
+    logging.basicConfig(level=logging.INFO, datefmt="%Y-%m-%dT%H:%M:%S",
+                        format="%(asctime)s.%(msecs)03dZ %(levelname)s %(name)s: %(message)s")
     main(args.db, args.host, args.port)

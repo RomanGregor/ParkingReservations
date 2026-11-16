@@ -56,6 +56,10 @@ GUI says "try again", also for the expiry check in `refresh()` since C06 F2),
 and every write, Create included, goes through `transaction()`. Revisit with
 ADR-04 above 1 000 reservations per place, or at the first lock error in the
 2 × 200 measurement at the current volume.
+*(C10: opening the database is covered too. A connection that cannot even
+run the schema check because another one holds an exclusive lock raises
+`StoreBusy`; a file that cannot be opened raises `StoreUnavailable`. The HTTP
+API answers both with 503 and logs them, see C10 in the evidence.)*
 
 ### D5 – HTTP API on the standard library `http.server` (C07, R-04)
 The team decided on 2026-11-02 that CP2 includes the HTTP client, so the CP1

@@ -19,7 +19,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from parking.domain import Reservation, RuleViolation, User
-from parking.service import StoreBusy, open_service
+from parking.service import StoreBusy, StoreUnavailable, open_service
 
 log = logging.getLogger("parking.http")
 
@@ -68,19 +68,34 @@ class ReservationHandler(BaseHTTPRequestHandler):
         except RuleViolation as e:
             return self._send(HTTPStatus.UNPROCESSABLE_ENTITY, {"error": str(e)})
         except StoreBusy as e:  # C04: another instance held the write lock too long
+            log.warning("POST /reservations: store busy, nothing changed (%s)", e.__cause__ or e)
             return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(e)}, {"Retry-After": "1"})
+        except StoreUnavailable as e:
+            return self._store_failed("POST /reservations", e)
         self._send(HTTPStatus.CREATED, {"id": r.id, "state": r.state.value})
 
     def do_GET(self):
         prefix = "/reservations/"
         if not self.path.startswith(prefix) or "/" in self.path[len(prefix):]:
             return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
-        r = self._with_service(lambda s: s.reservation(self.path[len(prefix):]))
+        try:
+            r = self._with_service(lambda s: s.reservation(self.path[len(prefix):]))
+        except StoreBusy as e:
+            log.warning("GET /reservations/<id>: store busy (%s)", e.__cause__ or e)
+            return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(e)}, {"Retry-After": "1"})
+        except StoreUnavailable as e:
+            return self._store_failed("GET /reservations/<id>", e)
         if r is None:
             return self._send(HTTPStatus.NOT_FOUND, {"error": "reservation does not exist"})
         self._send(HTTPStatus.OK, reservation_json(r))
 
     # --- helpers -------------------------------------------------------
+    def _store_failed(self, operation: str, e: StoreUnavailable) -> None:
+        """C10: the database could not be opened. Logged with operation and
+        failure type; the client gets a 503 instead of a dropped connection."""
+        log.error("%s failed: %s (database %s)", operation, e, self.db_path)
+        self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "reservation store unavailable"})
+
     def _with_service(self, call):
         service = open_service(self.db_path)
         try:

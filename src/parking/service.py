@@ -16,7 +16,7 @@ from parking import domain
 from parking.domain import ParkingPlace, Reservation, RuleViolation, State, User
 from parking.notification import LogNotifier, Notifier
 from parking.places import PlaceCatalog
-from parking.repository import ReservationRepository, StoreBusy  # noqa: F401  (StoreBusy is part of the service API)
+from parking.repository import ReservationRepository, StoreBusy, StoreUnavailable  # noqa: F401  (part of the service API)
 
 log = logging.getLogger("parking.service")
 
