@@ -125,7 +125,7 @@ One end-to-end path, runnable after C03 / before C04:
 
 ```
 POST /reservations {place_id, user_id, start, end}
-→ validate (end > start, max 24 h, place exists)
+→ validate (end > start, max 24 h or 4 h on EV-01, place exists)
 → persist as DRAFT in SQLite
 → return {"id": "<reservation id>", "state": "DRAFT"}
 → automated check: test posts a reservation, reads it back by id, asserts state == DRAFT
@@ -134,6 +134,7 @@ POST /reservations {place_id, user_id, start, end}
 Status: built in C07 (`src/parking/http_api.py`, standard library only, D5),
 with `GET /reservations/<id>` for the read-back. Checked end to end by
 `tests/test_http_api.py::HttpApi::test_cp1_post_creates_a_draft_that_is_read_back_by_id`.
-A rule violation (e.g. more than 24 h, unknown place) is a 422, a time without
-a UTC offset a 400. The same path without HTTP is still checked by
+A rule violation (e.g. more than 24 h, more than 4 h on EV-01, unknown place)
+is a 422, a time without a UTC offset a 400, a database that cannot be opened
+or is locked a 503 (C10). The same path without HTTP is still checked by
 `tests/test_service.py::test_cp1_created_reservation_is_read_back_by_id_as_draft`.

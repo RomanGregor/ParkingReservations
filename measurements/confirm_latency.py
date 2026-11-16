@@ -5,7 +5,7 @@ as the reservation history of a place grows.
 Usage: PYTHONPATH=src python3 measurements/confirm_latency.py [--history 100 1000 10000] [--runs 200]
 
 For every history size H the script creates a fresh SQLite file with H past
-reservations on each of the 5 catalog places (states mixed like a real
+reservations on each catalog place (5 in C04, 6 since C08 CR-08; states mixed like a real
 history: CONFIRMED, CANCELLED, EXPIRED, never-confirmed DRAFT), then times
 `ReservationService.confirm` on new DRAFTs of one place:
 

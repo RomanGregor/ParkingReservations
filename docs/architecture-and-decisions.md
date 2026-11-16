@@ -152,6 +152,7 @@ classDiagram
         id
         label
         requires_approval
+        max_duration
     }
     class Reservation {
         id
@@ -178,7 +179,7 @@ classDiagram
     Reservation "1" *-- "1" TimeInterval : interval [start, end)
     FacilityManager "0..1" -- "0..*" Reservation : schvaluje / zamítá
     note for ParkingPlace "BR-02: CONFIRMED rezervace téhož místa\nse nepřekrývají"
-    note for TimeInterval "BR-01: [start, end); BR-04: nejvýš 24 h;\nBR-05: start >= now + 1 h"
+    note for TimeInterval "BR-01: [start, end); BR-04: nejvýš 24 h,\nBR-06: EV místo nejvýš 4 h (max_duration, C08 CR-08);\nBR-05: start >= now + 1 h"
 ```
 
 Oproti C02 je nové jen to, že role Driver a Facility manager jsou
@@ -536,6 +537,7 @@ classDiagram
         +id
         +label
         +requires_approval
+        +max_duration
     }
     class State {
         <<enumeration>>
@@ -751,6 +753,9 @@ jsou rozdělené po přechodech, každý přechod má jednu funkci.
 `AvailabilityResult` a `Availability` nejsou vlastníci odpovědnosti. Jsou
 to data, která vrací `evaluate_availability` (DD-4). `ParkingPlace` dodává
 Place Catalog (R5 z C03). Jednotka z něj čte jen `requires_approval`.
+*(C08 CR-08: `ParkingPlace` má navíc `max_duration`, 24 h, u `EV-01` 4 h.
+Čte ho jen `create_reservation` (BR-04 / BR-06), který do této jednotky
+nepatří, viz DD-8. DD-4 až DD-6 se tím nemění.)*
 
 ### DD-4 Key interface(s) / contract(s)
 

@@ -97,6 +97,44 @@ class EvPlaceOverlap(unittest.TestCase):
             self.assertEqual([r[3] for r in stored_rows(path)], ["CONFIRMED", "DRAFT", "CONFIRMED"])
 
 
+class EvPlaceInGui(unittest.TestCase):
+    """AC-06, GUI part: EV-01 is offered in the place list and a p6
+    reservation is shown with its label (gui.refresh looks labels up)."""
+
+    def test_ac06_gui_offers_ev_01_and_shows_its_reservation(self):
+        try:
+            import tkinter
+            from tkinter import ttk
+            from unittest import mock
+            from parking.gui import App
+        except ImportError:
+            self.skipTest("tkinter is not available")
+        with tempfile.TemporaryDirectory() as d:
+            service = ReservationService(ReservationRepository(os.path.join(d, "gui.db")), clock=lambda: NOW)
+            try:
+                service.create("p6", DRIVER, at(8), at(12))
+                with mock.patch("parking.gui.messagebox"):
+                    try:
+                        app = App(service)
+                    except tkinter.TclError:
+                        self.skipTest("no display for tkinter")
+                    app.withdraw()
+                    try:
+                        def widgets(w):
+                            yield w
+                            for child in w.winfo_children():
+                                yield from widgets(child)
+                        boxes = [w for w in widgets(app) if isinstance(w, ttk.Combobox)]
+                        self.assertEqual(len(boxes), 1)
+                        self.assertIn("EV-01", boxes[0].cget("values"))
+                        rows = [app.table.item(i, "values") for i in app.table.get_children()]
+                        self.assertEqual([(r[1], r[5]) for r in rows], [("EV-01", "DRAFT")])
+                    finally:
+                        app.destroy()
+            finally:
+                service.close()
+
+
 class EvPlaceOverHttp(unittest.TestCase):
     """TC-CR08-03: AC-01..AC-03 through the real HTTP adapter and SQLite file."""
 
