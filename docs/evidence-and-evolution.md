@@ -731,11 +731,11 @@ rozhodnutí: `docs/intent-and-change.md`, sekce „C08 / CR-08“.
 
 | # | Akce | Expected (před během) | Actual (po běhu) |
 |---|---|---|---|
-| 1 | nový soubor DB, vytvořit a potvrdit B1, vytvořit B2 | jen B1 `CONFIRMED`, B2 `DRAFT` | *doplnit po běhu* |
-| 2 | nezávisle přečíst intervaly a stavy | B1 končí 11:00, B2 začíná 11:00; žádná jiná `CONFIRMED` | *doplnit po běhu* |
-| 3 | `service.confirm(B2)` | uspěje, vrátí `CONFIRMED` | *doplnit po běhu* |
-| 4 | nové spojení, přečíst uložený stav | B1 i B2 `CONFIRMED`, bez překryvu | *doplnit po běhu* |
-| 5 | celé znovu z nového souboru | stejný výsledek | *doplnit po běhu* |
+| 1 | nový soubor DB, vytvořit a potvrdit B1, vytvořit B2 | jen B1 `CONFIRMED`, B2 `DRAFT` | B1 `CONFIRMED`, B2 `DRAFT` |
+| 2 | nezávisle přečíst intervaly a stavy | B1 končí 11:00, B2 začíná 11:00; žádná jiná `CONFIRMED` | `[('…T10:00…', '…T11:00…', 'CONFIRMED'), ('…T11:00…', '…T12:00…', 'DRAFT')]` |
+| 3 | `service.confirm(B2)` | vráceno `CONFIRMED` |
+| 4 | nové spojení, přečíst uložený stav | B1 i B2 `CONFIRMED`, intervaly [10,11) a [11,12) |
+| 5 | celé znovu z nového souboru | běh 2 dal totožné řádky i výsledek |
 
 ### TC-C08-02 — překrývající se potvrzení je odmítnuto, nic se nezmění
 
@@ -750,11 +750,40 @@ rozhodnutí: `docs/intent-and-change.md`, sekce „C08 / CR-08“.
 
 | # | Akce | Expected (před během) | Actual (po běhu) |
 |---|---|---|---|
-| 1 | nový soubor DB, B1 `CONFIRMED`, B2 `DRAFT` | jen B1 `CONFIRMED` | *doplnit po běhu* |
-| 2 | nezávisle přečíst výchozí stav | intervaly se překrývají, `CONFIRMED` je jen B1 | *doplnit po běhu* |
-| 3 | `service.confirm(B2)` | `RuleViolation`, hláška obsahuje id B1 | *doplnit po běhu* |
-| 4 | nové spojení, přečíst uložený stav | totožný s krokem 2: B1 `CONFIRMED`, B2 `DRAFT` | *doplnit po běhu* |
-| 5 | celé znovu z nového souboru | stejný výsledek | *doplnit po běhu* |
+| 1 | nový soubor DB, B1 `CONFIRMED`, B2 `DRAFT` | B1 `CONFIRMED`, B2 `DRAFT` |
+| 2 | nezávisle přečíst výchozí stav | `[('…T10:00…', '…T11:00…', 'CONFIRMED'), ('…T10:30…', '…T11:30…', 'DRAFT')]` |
+| 3 | `service.confirm(B2)` | `RuleViolation: confirmed reservations for the same place must not overlap; conflicts with <id B1>` |
+| 4 | nové spojení, přečíst uložený stav | totožný s krokem 2 (porovnání celých řádků) |
+| 5 | celé znovu z nového souboru | běh 2 dal totožné řádky i výsledek |
 
 **Co testy nepokrývají:** souběžné Confirm (REQ-04, zvlášť v
 `test_concurrency.py`), Approve na místě se schválením, GUI samotné.
+
+### Provedení (2026-11-16 11:50 UTC)
+
+Kód aplikace = `743fb2a` (`git diff 743fb2a -- src` je prázdný), testy z
+`cbe35ec` (Expected zapsané a commitnuté před během).
+
+```
+python -m unittest tests.test_c08_baseline -v
+test_tc_c08_01_adjacent_reservation_can_be_confirmed ... ok
+test_tc_c08_02_overlapping_confirm_is_rejected_and_nothing_changes ... ok
+Ran 2 tests in 0.077s — OK
+python -m unittest discover -s tests  ->  Ran 90 tests — OK (88 + 2)
+```
+
+Řádky v tabulkách výše jsou výpis nezávislého čtení souboru (časy zkrácené
+na `…T10:00…`, plně `2026-12-01T10:00:00+00:00`).
+
+| Test | Verdikt | Pozorovaný základ |
+|---|---|---|
+| TC-C08-01 | **PASS** | oba běhy: B2 `CONFIRMED`, v souboru dvě navazující `CONFIRMED` |
+| TC-C08-02 | **PASS** | oba běhy: `RuleViolation` s id B1, uložené řádky beze změny |
+
+**Umí test selhat?** Mutace v kopii kódu (z `domain.confirm` odstraněno
+`_require_no_conflict`) → TC-C08-02 `FAIL: RuleViolation not raised` v obou
+bězích. Test tedy BR-02 při Confirm skutečně hlídá.
+
+**Limit důkazu:** jde o integraci služba → SQLite soubor ve stejném procesu;
+GUI ani HTTP (Confirm přes HTTP neexistuje) se neprocházely. Souběh tu
+není, ten ověřuje `test_concurrency.py`.
