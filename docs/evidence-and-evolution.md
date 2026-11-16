@@ -907,13 +907,29 @@ https://github.com/RomanGregor/ParkingReservations/actions/runs/43864843441
 | windows-latest, 3.12 | success | 29 s |
 | windows-latest, 3.14 | success | 31 s |
 
-Ověřeno přes GitHub API bez přihlášení: stav a výsledek jobů a kroků
-(`python check.py --log check.log` = success, tj. exit 0 = build OK a 0
-selhání). Logy jobů a artefakty `check.log` vyžadují přihlášení (HTTP 403),
-takže počty spuštěných a přeskočených testů jsme z CI **nepřečetli**.
-Na Ubuntu nejspíš chybí displej a GUI testy (`EvPlaceInGui`, test z C06 F2)
-se přeskočí; neověřeno. Doplnit z artefaktu `check-*` řádek `tests run: …,
-skipped: …`.
+Stav jobů a kroků je ověřený přes GitHub API (`python check.py --log
+check.log` = success, tj. exit 0 = build OK a 0 selhání). Log
+`check.log` z jobu **ubuntu-latest, 3.14** (artefakt
+`check-ubuntu-latest-py3.14`):
+
+```
+commit:  31a9ba5a49e29a4a4ba47d98c68d42eaaa0314d4
+python:  3.14.10 (/opt/hostedtoolcache/Python/3.14.10/x64/bin/python)
+sqlite:  3.46.1
+os:      Linux-7.0.0-1019-azure-x86_64-with-glibc2.43
+build:   OK
+tests run: 103, failures: 0, errors: 0, skipped: 2
+  skipped: test_concurrency.ExpiryWhileStoreBusy.test_gui_reports_a_busy_expiry_check_and_keeps_running (no display for tkinter)
+  skipped: test_cr08_ev_place.EvPlaceInGui.test_ac06_gui_offers_ev_01_and_shows_its_reservation (no display for tkinter)
+result:  PASS (exit 0)
+```
+
+Na Linuxu v CI tedy proběhlo 101 ze 103 testů. Oba GUI testy se přeskočily,
+protože runner nemá displej. GUI část AC-06 a test z C06 F2 jsou proto
+ověřené jen lokálně na Windows (0 přeskočeno, viz výše). Všechny
+integrační testy přes HTTP a SQLite proběhly i na Linuxu, a to s jinou
+verzí SQLite (3.46.1 místo 3.50.4). Logy ostatních tří jobů jsme nečetli,
+známe u nich jen exit 0.
 
 ```
 commit:  11e385d7e5c9b35f9a6c50a46b566fdcd4122aed
@@ -962,7 +978,8 @@ nebo nechat `p6` v katalogu staré verze. Automatizované to není. Schéma je
 v obou verzích stejné, takže jinak je DB zpětně kompatibilní.
 
 **Reziduální rizika:** EV-only uživatelé (DEFER); rollback viz výše;
-review a nezávislá reprodukce chybí; v CI neznáme počet přeskočených testů.
+review a nezávislá reprodukce chybí; GUI testy v CI na Linuxu přeskočené
+(bez displeje), GUI ověřené jen lokálně na Windows.
 
 **Release decision: HOLD** (owner R. Gřegoř, 2026-11-16). Automatické
 testy, integrace přes HTTP + SQLite, měření i čistý checkout autorem prošly.
