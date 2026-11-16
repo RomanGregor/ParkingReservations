@@ -132,7 +132,7 @@ register.
 | Notification (`notification.py`) | **NO IMPACT** – notifies on state change, place-independent | none | – |
 | Tests | **CHANGE** – new boundary oracle (AC-01..AC-03, AC-06); regression AC-04, AC-05 | new tests + full suite | C09 test table |
 | Security / roles (R-05) | **NO IMPACT** – no new state-changing HTTP operation; EV-user eligibility is deferred | none; R-05 monitor unchanged | – |
-| Operation / recovery | **CHECK** – rolling back the code while `p6` reservations exist: `PlaceCatalog.find("p6")` fails ("parking place does not exist") on Confirm, and the GUI `labels[...]` lookup in `refresh()` raises `KeyError` | document: before a code rollback, cancel/remove `p6` rows; rollback not automated | C09 release record |
+| Operation / recovery | **CHECK** – rolling back the code while `p6` reservations exist: `PlaceCatalog.find("p6")` fails ("parking place does not exist") on Confirm, and the GUI `labels[...]` lookup in `refresh()` raises `KeyError` | document: before a code rollback, remove `p6` rows; rollback not automated. *C09 update: tried it – Cancel works on old code, but the GUI lookup fails even for a CANCELLED `p6` row, so the rows must be deleted (see C09 rollback).* | C09 release record |
 
 **Alternatives** (common criteria: meets AC, scope, failure/rollback,
 verification):

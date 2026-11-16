@@ -72,6 +72,18 @@ C04 measurement (a few minutes; 1 instance, then 2 processes confirming at once)
 PYTHONPATH=src python3 measurements/confirm_latency.py
 ```
 
+C10 operational trials (success, conflict, storage outage, locked DB,
+restart) against the real API process, on a disposable database in a new
+temporary directory (never `parking.db`); prints responses, an independent
+read of the database after each step and the API log:
+
+```
+python3 measurements/c10_operations.py      # optional: --workdir DIR --port 8766
+```
+
+The API logs to stderr in UTC (`2026-11-16T11:58:13.564Z ERROR parking.http: ...`).
+A database that cannot be opened or is locked is answered with 503.
+
 The same on Windows PowerShell (`python` instead of `python3`):
 
 ```
@@ -96,6 +108,7 @@ run_api.py                      # launches the HTTP API
 check.py                        # C09: build + all tests, the same locally and in CI
 .github/workflows/check.yml     # C09: CI running check.py (Linux + Windows)
 measurements/confirm_latency.py # C04: Confirm time vs. history size, lock errors
+measurements/c10_operations.py  # C10: operational trials against the running API
 src/parking/                    # service (state changes), domain rules, place catalog,
                                 # persistence, notification stub, tkinter GUI, HTTP API
 tests/                          # unit, service, concurrency, HTTP API and architecture tests
@@ -103,6 +116,7 @@ tests/                          # unit, service, concurrency, HTTP API and archi
   test_http_api.py              # CP1 walking skeleton end to end over HTTP
   test_c08_baseline.py          # C08: TC-C08-01/02 against a SQLite file, independent read
   test_cr08_ev_place.py         # C09: CR-08 EV place, 4 h boundary incl. over HTTP
+  test_c10_operations.py        # C10: locked / unavailable database -> StoreBusy / 503
 ```
 
 ## CP1 walking skeleton

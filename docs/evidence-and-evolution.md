@@ -697,6 +697,23 @@ jinak NOT VERIFIED. Stav k 2026-11-02, větev `c07-open-items` (nad
 - I-03 drobné nekonzistence dokumentace (viz C06 „Drobnosti z formuláře“) – opraveno v `da3d858`; zkontrolováno 2026-11-02 (commit v C04, 80 testů, PowerShell v README, „Proč tato úroveň“, poznámka k L1).
 - I-04 měřicí skript se mohl zablokovat (připomínka z review C07) – opraveno `322bc58`.
 
+### Přezkum rizik v C08–C10 (2026-11-16)
+
+- **R-01:** trigger je otevřený – větev `c08-c10-ev-place` zatím nemá
+  review jiného člena (C08 rozhodnutí i C09 diff) ani jeho čistý checkout.
+  Proto C09 HOLD. Hodnocení LOW (2) platí jen, pokud se review a checkout
+  doplní.
+- **R-02:** přeměřeno po přidání `p6` (6 míst, 60 000 řádků): QC-2 1/400 při
+  10 000/místo, nejdelší čekání 2,8 s – v pásmu D4, beze změny. MEDIUM (4).
+- **R-03:** QC-1 na Windows, na adaptéru (`BatteryStatus` 2), p95 41,2 ms;
+  trigger nenastal. LOW (2).
+- **R-04:** HTTP přibylo jen ošetření chyb úložiště (503), žádná nová
+  operace. LOW (2).
+- **R-05:** beze změny; EV jen pro majitele elektromobilů je DEFER právě
+  kvůli chybějícímu přihlášení. LOW (2).
+- **Nové issue I-05** (C10, už nastalo): chyba při otevření DB → HTTP bez
+  odpovědi, log bez času; opraveno `0398941`.
+
 ## C08 — Řízená změna: baseline a testy před změnou
 
 Change Card CR-08 (EV nabíjecí místo, max 4 h), Impact Matrix, varianty a
@@ -788,6 +805,117 @@ bězích. Test tedy BR-02 při Confirm skutečně hlídá.
 GUI ani HTTP (Confirm přes HTTP neexistuje) se neprocházely. Souběh tu
 není, ten ověřuje `test_concurrency.py`.
 
+## C09 — Integration, CI and Release Record (CR-08)
+
+**C08 Change Card a rozhodnutí:** `docs/intent-and-change.md`, „C08 / CR-08“
+– ACCEPT varianty A (limit délky jako vlastnost místa), navrženo vlastníkem
+R. Gřegořem 2026-11-16. **Peer review rozhodnutí zatím chybí** (viz níže),
+proto implementace postupuje s vědomím, že review ji může vrátit.
+
+**Before / after:** before = `743fb2a`. Kód CR-08 = `1969157`, automatizace
+= `21bbb36`, oprava z C10 = `0398941` (= release candidate, poslední commit
+s kódem). Větev `c08-c10-ev-place`, zatím nepushnutá, bez tagu.
+
+**Dotčená tvrzení:** nové AC-01..AC-06 (BR-06, REQ-01 v0.3). Regresní báze:
+TC-C08-01/02, BR-04 na ostatních místech, BR-02 na EV místě, všech 88
+testů z baseline.
+
+**Změněno:** `domain.py` (`ParkingPlace.max_duration`, `EV_MAX_DURATION`,
+`create_reservation` bere limit místa), `places.py` (`p6` / `EV-01`),
+`gui.py` (jen nápověda), `specification.md` (BR-06, REQ-01 v0.3), nové testy
+`test_cr08_ev_place.py`. **Záměrně beze změny:** schéma DB, stavy a
+přechody, Confirm/Approve/Cancel, HTTP kontrakt, ADR-04. **N/A:** migrace
+(místa nejsou v DB a sloupec nepřibyl), konfigurace (limit je konstanta jako
+BR-04/BR-05, aplikace nemá konfigurační soubor), worker/import (neexistují).
+
+**Peer review:** *PENDING* – recenzent (jiný člen týmu než autor), datum,
+zpochybněný předpoklad a výsledek. K prověření: hranice 4 h včetně, kontrola
+jen při Create, hláška chyby, omezení rollbacku níže, oprava z C10
+(`0398941`). Bez review nelze vydat READY.
+
+| Test ID | Nezávislý oracle | Příkaz / data | Expected | Actual | Verdikt | Evidence |
+|---|---|---|---|---|---|---|
+| TC-CR08-01 (AC-01, AC-02, AC-03, AC-06) | Change Card AC, spec BR-06 | `tests/test_cr08_ev_place.py::EvPlaceRule`, `now` = 06:00 | 2 h a přesně 4 h `DRAFT`; 4 h + 1 s a 4 h 1 min zamítnuto s „4 hours“ / „EV-01“; EV-01 v katalogu, 4 h, bez schválení | odpovídá | PASS | `check.py` log níže |
+| TC-CR08-03 (AC-02, AC-03 přes HTTP) | AC + nezávislé čtení souboru | `EvPlaceOverHttp`, skutečný HTTP server, soubor SQLite | 4 h → 201 `DRAFT` a v DB jeden řádek `p6 DRAFT`; 4 h + 1 s, 4 h 1 min → 422 „4 hours“, v DB dál jeden řádek | odpovídá | PASS | `check.py` log |
+| AC-04 regrese BR-04 | spec BR-04 | `test_ac04_other_places_keep_24_hours` | A-01 24 h `DRAFT`, 25 h zamítnuto; všechna místa kromě p6 mají 24 h | odpovídá | PASS | `check.py` log |
+| AC-05 BR-02 na EV-01 | BR-02 + nezávislé čtení | `EvPlaceOverlap`, soubor SQLite | překryv odmítnut, navazující potvrzena; v DB `CONFIRMED, DRAFT, CONFIRMED` | odpovídá | PASS | `check.py` log |
+| C08 regrese TC-C08-01 | BR-01, BR-02, REQ-03 | `tests/test_c08_baseline.py` | jako v C08 | odpovídá | PASS | `check.py` log |
+| C08 regrese TC-C08-02 | BR-02, REQ-03 | `tests/test_c08_baseline.py` | jako v C08 | odpovídá | PASS | `check.py` log |
+| celá sada | dosavadní tvrzení C02–C07 | `python check.py` | 0 selhání | 102 testů, 0 selhání, 0 přeskočeno | PASS | níže |
+| QC-1 / QC-2 po změně (Impact „měření“) | C04: p95 ≤ 100 ms; D4 | `confirm_latency.py --history 10000 --runs 200`, na adaptéru | QC-1 dál splněno; QC-2 1–2/400 jako v D4 | p95 41,24 ms (60 000 řádků = 6 míst); QC-2 1/400 | PASS | výpis níže |
+| Python 3.12 (README „3.12+“) | README | – | – | – | NOT RUN | lokálně jen 3.11 a 3.14; pokryje CI matrix |
+
+**Umí nové testy selhat?** Na kódu `743fb2a` se `test_cr08_ev_place.py`
+nenačte (`parking place does not exist` pro `p6`). Mutace (globální limit
+24 h místo limitu místa) → 3 FAIL (4 h + 1 s, 4 h 1 min, HTTP 422).
+
+**Skutečná integrační hranice:** HTTP server na skutečném socketu →
+`ReservationService` → soubor SQLite; stav čte test vlastním spojením
+`sqlite3` (TC-CR08-03, AC-05, TC-C08-01/02). Je to součást `check.py`, ne
+ruční krok.
+
+**Automatizace:** `python check.py [--log check.log]` (`21bbb36`): zapíše
+commit, Python, SQLite, OS; byte-compile `src/`, `tests/`, `measurements/` a
+skriptů; spustí všechny testy; vypíše přeskočené; exit 0 jen při úspěchu.
+Ověřeno, že selhání testu dá `result: FAIL (exit 1)` a exit kód 1.
+CI: `.github/workflows/check.yml` spouští totéž na Ubuntu a Windows
+s Pythonem 3.12 a 3.14 – **PLANNED / NOT RUN**, dokud větev není pushnutá.
+
+```
+commit:  039894107d511a38792bbf4d2ffe520feabca253
+python:  3.14.3 (C:\Python314\python.exe)
+sqlite:  3.50.4
+os:      Windows-11-10.0.26100-SP0
+build:   OK
+tests run: 102, failures: 0, errors: 0, skipped: 0
+result:  PASS (exit 0)
+```
+
+**Čistý checkout (stejný autor, stejný stroj – není nezávislá
+reprodukce):** `git clone` lokálního repozitáře do nového adresáře
+(větev není na GitHubu, README uvádí URL GitHubu), `git checkout 0398941`,
+`git status` čistý, bez `.env` a bez lokálních souborů, `python check.py
+--log check.log` → PASS, 102 testů; smoke podle README: `run_api.py
+smoke.db` + POST `p6` 4 h → 201 `DRAFT`, GET → 200, POST `p6` 5 h → 422
+„parking place EV-01 can be reserved for at most 4 hours“, v DB jeden řádek
+`('p6', 'DRAFT')`. Totéž předtím na `21bbb36` (98 testů).
+
+**Nezávislá reprodukce jiným členem:** *PENDING (NOT RUN)*. Další krok:
+push větve, jiný člen naklonuje `0398941` z GitHubu podle README na svém
+stroji, spustí `check.py` a smoke, zapíše OS/Python, příkazy a výsledek.
+
+**Identita release candidate:**
+
+| Položka | Hodnota |
+|---|---|
+| zdroj | `039894107d511a38792bbf4d2ffe520feabca253`; tag `c09-rc1` až po review |
+| artefakt | žádný build kromě zdrojů; `git archive --format=tar 0398941` → SHA-256 `b7cd3fb78f2965d5dc557b192040b87e61bc549a0d0241cb8db5e8e504db7ea6` (dvakrát stejný) |
+| závislosti | žádné mimo standardní knihovnu (D1), proto žádný lock soubor |
+| runtime | ověřeno Python 3.14.3, SQLite 3.50.4, Windows 11; README tvrdí 3.12+ (neověřeno lokálně) |
+| schéma DB | tabulka `reservation` beze změny od C01, žádná migrace |
+| konfigurace | jen argumenty příkazové řádky (cesta k DB, host, port); žádná tajemství |
+
+**Rollback a jeho omezení (vyzkoušeno 2026-11-16):** DB nový kód vytvořil
+rezervaci na `p6` a pak ji otevřel kód `743fb2a`. Výsledek: čtení jde,
+Confirm → „parking place does not exist“, Cancel projde, výraz
+`labels[r.place_id]` z `gui.refresh()` → `KeyError: 'p6'` (GUI samotné se
+nespouštělo). GUI by tedy po rollbacku spadlo při překreslení tabulky, a to
+i se **zrušenou** rezervací `p6`. Rollback kódu proto vyžaduje smazat řádky
+`p6` (`DELETE FROM reservation WHERE place_id = 'p6'`, ztráta historie EV)
+nebo nechat `p6` v katalogu staré verze. Automatizované to není. Schéma je
+v obou verzích stejné, takže jinak je DB zpětně kompatibilní.
+
+**Reziduální rizika:** EV-only uživatelé (DEFER); rollback viz výše;
+review a nezávislá reprodukce chybí; CI neběželo.
+
+**Release decision: HOLD** (owner R. Gřegoř, 2026-11-16). Automatické
+testy, integrace přes HTTP + SQLite, měření i čistý checkout autorem prošly.
+Chybí ale peer review rozhodnutí C08 i diffu a reprodukce jiným členem; obojí
+je v C09 povinné. Změna na READY, až: (1) review zapsané výše bez
+nevyřešených nálezů, (2) jiný člen zopakuje čistý checkout `0398941` s PASS,
+(3) po pushi CI zelené (nebo zapsaný důvod, proč neběží). Zelené testy
+nejsou povolení k nasazení.
+
 ## C10 — Provozní situace a logy
 
 ### Plán a očekávání (zapsáno před pokusy)
@@ -814,3 +942,79 @@ vlastním čtením souboru přes `sqlite3`, ne z logu.
 
 Pokud v pokusu 3 chybí čas, operace nebo typ chyby, doplníme jeden
 minimální logovací záznam a pokus zopakujeme (zadání C10).
+
+### Provedení
+
+Skript `measurements/c10_operations.py` (`b176e39`) pouští všechny pokusy
+proti skutečnému procesu `run_api.py`. Běh 1 (2026-11-16 11:56 UTC) na
+kódu `b176e39` (aplikace = `21bbb36`), běh 2 (11:58 UTC) na `0398941` po
+doplnění logu a ošetření chyby. Windows 11, Python 3.14.3, SQLite 3.50.4.
+
+```
+python measurements/c10_operations.py --workdir <nový prázdný adresář>
+```
+
+| Situace | Očekávaný a skutečný výsledek | Jak jsme správnost ověřili | Co ukazují logy / je log potřeba? |
+|---|---|---|---|
+| Úspěšné potvrzení | **E:** 201 `DRAFT`, confirm `CONFIRMED`. **A (oba běhy):** POST 201 `DRAFT`, confirm vrátil `CONFIRMED`, GET 200 `CONFIRMED`. **PASS** | nezávislé čtení souboru: jediný řádek `c10-driver-1 14:00–16:00 CONFIRMED` | řádky přístupu `POST … 201`, `GET … 200` a `parking.notification: notify c10-driver-1: … is now CONFIRMED`. Víc není potřeba; o správnosti rozhodla odpověď a stav DB, ne log. |
+| Zamítnutá kolize | **E:** `RuleViolation` s id první rezervace, nic se nezmění. **A (oba běhy):** POST 201 `DRAFT`; confirm → `RuleViolation: … conflicts with <id b1>`. **PASS** | DB: b1 `CONFIRMED`, b2 15:00–17:00 `DRAFT` (beze změny) | V logu o zamítnutí nic není a **log nepřidáváme**: jde o běžné doménové rozhodnutí, ne technickou chybu, uživatel dostane důvod v odpovědi (GUI hláška) a specifikace nepožaduje audit. Logovat každou kolizi by byl šum. Pokud by vznikl požadavek na audit sporů o místa, patří do DB, ne do textového logu. |
+| Technická porucha a obnova – úložiště nedostupné (3a) | **E:** chybová odpověď, nic uloženo, server běží, v logu čas, operace, typ chyby. **A běh 1: FAIL** – žádná HTTP odpověď (`RemoteDisconnected`), v logu jen traceback socketserveru bez času a bez úrovně (`sqlite3.OperationalError: unable to open database file` v `ReservationRepository.__init__`). Server běžel dál; po vrácení adresáře POST 201. **A běh 2: PASS** – 503 `reservation store unavailable` za 0,00 s; po obnovení 201. | DB po obnovení: řádky z pokusů 1–2 + jeden nový; neúspěšný pokus nic nezapsal | Běh 1: z logu šlo poznat jen „něco spadlo při otevření DB“, ne kdy. **Doplněno** (`0398941`): jeden záznam `ERROR … POST /reservations failed: cannot open the reservation store: unable to open database file (database …)` a časy v UTC se `Z` a úrovní. |
+| Technická porucha – DB zamčená jiným procesem (3b) | **E:** po ~5 s 503 + `Retry-After: 1`, nic uloženo. **A běh 1: FAIL** – po 7,51 s žádná odpověď; příčina `database is locked` v `CREATE TABLE IF NOT EXISTS` při otevření repozitáře, tedy mimo `transaction()`, takže tvrzení D4 „StoreBusy, nic se nezměnilo“ pro otevření neplatilo. **A běh 2: PASS** – 503 `the reservation store is busy, try again`, `Retry-After: 1`, za 7,49 s; po uvolnění zámku 201. | DB po uvolnění: předchozí řádky + jeden nový; zamítnutý pokus nic nezapsal | běh 2: `WARNING … POST /reservations: store busy, nothing changed (database is locked)` + řádek přístupu 503. Čekání 7,5 s místo `LOCK_TIMEOUT` 5 s je pozorované, příčina neověřená (pravděpodobně čekání SQLite při otevření a schématu). |
+| Restart aplikace | **E:** po startu GET `CONFIRMED` beze změny, nový POST 201; v logu dva starty, zastavení ne. **A (oba běhy):** proces ukončen tvrdě (`terminate`, exit 1), znovu spuštěn nad stejnou DB za 0,5 s; GET b1 → `CONFIRMED`; POST → 201. **PASS** | DB po restartu: všechny dřívější řádky + nový, b1 dál `CONFIRMED` | dva řádky `HTTP API on http://127.0.0.1:8766, database …`; zastavení v logu **není** (tvrdé ukončení nic nezapíše). Výpadek je v logu vidět jen jako mezera mezi posledním požadavkem a novým startem. Řádné zastavení Ctrl+C jsme nezkoušeli (**NOT RUN**: v neinteraktivním prostředí nejde poslat Ctrl+C); log zastavení nepřidáváme, protože pád ho stejně nezapíše a start s cestou k DB stačí. |
+
+Výřez logu, běh 1 (před doplněním), pokus 3a:
+
+```
+2026-11-16 12:56:07,385 parking.http: 127.0.0.1 "POST /reservations HTTP/1.1" 201 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 65187)
+Traceback (most recent call last):
+  ...
+  File "...\src\parking\repository.py", line 31, in __init__
+    self._db = sqlite3.connect(path, isolation_level=None, timeout=lock_timeout)
+sqlite3.OperationalError: unable to open database file
+----------------------------------------
+```
+
+(čas `12:56` je místní čas bez offsetu; DB pracuje v UTC, tj. 11:56)
+
+Výřez logu, běh 2 (po doplnění), pokusy 3a, 3b a 4:
+
+```
+2026-11-16T11:58:13.564Z ERROR parking.http: POST /reservations failed: cannot open the reservation store: unable to open database file (database …\data\c10.db)
+2026-11-16T11:58:13.564Z INFO parking.http: 127.0.0.1 "POST /reservations HTTP/1.1" 503 -
+2026-11-16T11:58:13.585Z INFO parking.http: 127.0.0.1 "POST /reservations HTTP/1.1" 201 -
+2026-11-16T11:58:21.136Z WARNING parking.http: POST /reservations: store busy, nothing changed (database is locked)
+2026-11-16T11:58:21.136Z INFO parking.http: 127.0.0.1 "POST /reservations HTTP/1.1" 503 -
+2026-11-16T11:58:21.679Z INFO parking.http: 127.0.0.1 "POST /reservations HTTP/1.1" 201 -
+2026-11-16T11:58:21.911Z INFO parking.http: HTTP API on http://127.0.0.1:8766, database …\data\c10.db
+2026-11-16T11:58:22.202Z INFO parking.http: 127.0.0.1 "GET /reservations/32821bea… HTTP/1.1" 200 -
+```
+
+**Změna kódu z C10** (`0398941`, minimální): otevření repozitáře hlásí
+`StoreBusy` (zamčeno) nebo nový `StoreUnavailable` (soubor nejde otevřít)
+místo surové `sqlite3` chyby; HTTP API odpoví 503 a zapíše jeden záznam
+s operací a typem chyby; `run_api.py` loguje v UTC s úrovní. Klienti dál
+neimportují `sqlite3` (architektonický test). Testy
+`tests/test_c10_operations.py` (4): zámek při otevření → `StoreBusy`,
+chybějící adresář → `StoreUnavailable`, HTTP POST/GET → 503 + záznam ERROR.
+
+**Závěr.**
+- *Co má smysl logovat:* start (adresa a cesta k DB), technické chyby
+  úložiště s operací a typem (ERROR) a odmítnutí kvůli zámku (WARNING, nic
+  se nezměnilo). Řádky přístupu stačí pro časovou osu. Úspěchy a doménová
+  zamítnutí navíc ne.
+- *Co jsme z logů skutečně zjistili:* kdy a ve které operaci selhalo
+  otevření DB (po doplnění), že server po chybě běžel dál, kdy byl znovu
+  spuštěn a nad jakou DB. Před doplněním z logu nešlo zjistit čas ani to,
+  že klient nedostal odpověď.
+- *Co jsme museli ověřit jinak:* že potvrzení skutečně platí, že kolize
+  nic nezměnila, že neúspěšné pokusy nic nezapsaly a že po restartu
+  `CONFIRMED` zůstala – vše nezávislým čtením souboru přes `sqlite3`.
+  Odpověď klienta při výpadku (žádná vs. 503) ukázal až klient, ne log.
+  Okamžik tvrdého ukončení z logu nezjistíme.
+- *Zbývá:* `LogNotifier` zapisuje `user_id` (zástupce e-mailové
+  notifikace). U testovacích id to nevadí, v provozu by to byl osobní údaj
+  v logu a musí se nahradit skutečnou notifikací nebo pseudonymem. GUI
+  (`run.py`) loguje dál v místním čase; v C10 se netestovalo. Confirm přes
+  HTTP neexistuje, pokusy 1–2 proto šly přes službu v samostatném procesu.
