@@ -1,0 +1,24 @@
+# C09: the same check as `python3 check.py` locally, on every push and PR.
+name: check
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python check.py --log check.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-${{ matrix.os }}-py${{ matrix.python }}
+          path: check.log

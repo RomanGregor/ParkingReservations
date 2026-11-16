@@ -35,13 +35,35 @@ curl -X POST http://127.0.0.1:8000/reservations -H "Content-Type: application/js
 curl http://127.0.0.1:8000/reservations/<id>
 ```
 
-Times need a UTC offset (`+00:00`). Places are `p1`..`p4` (`A-01`..`A-04`)
-and `p5` (`VIP-01`, needs approval).
+Times need a UTC offset (`+00:00`). Places are `p1`..`p4` (`A-01`..`A-04`),
+`p5` (`VIP-01`, needs approval) and `p6` (`EV-01`, EV charging, at most 4 h,
+C08 CR-08). All other places allow at most 24 h.
 
-Tests:
+Build and test check (C09, the same command runs in CI,
+`.github/workflows/check.yml`): prints commit, Python, SQLite and OS,
+byte-compiles the sources, runs all tests, lists skipped ones, exit code 0
+only on success. Nothing to install (standard library only). Each test
+creates its own SQLite file in a temporary directory, so no database or
+configuration has to be prepared and no environment variable is needed.
+
+```
+python3 check.py                  # or: python3 check.py --log check.log
+```
+
+Tests only:
 
 ```
 PYTHONPATH=src python3 -m unittest discover -s tests -v
+```
+
+Clean checkout (C09 reproduction):
+
+```
+git clone https://github.com/RomanGregor/ParkingReservations.git pr-clean
+cd pr-clean
+git checkout <commit or tag>
+python3 check.py --log check.log
+python3 run_api.py smoke.db --port 8000     # smoke: POST + GET as above, then Ctrl+C
 ```
 
 C04 measurement (a few minutes; 1 instance, then 2 processes confirming at once):
@@ -53,6 +75,7 @@ PYTHONPATH=src python3 measurements/confirm_latency.py
 The same on Windows PowerShell (`python` instead of `python3`):
 
 ```
+python check.py
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 python measurements/confirm_latency.py
@@ -63,18 +86,23 @@ python measurements/confirm_latency.py
 ```
 README.md
 docs/
-  intent-and-change.md          # Project Frame + future pressure
+  intent-and-change.md          # Project Frame + future pressure, C08 change card CR-08
   architecture-and-decisions.md # stack, C03 architecture (ADR-04), C05 detailed design
-  specification.md              # C02: baseline v0.1/v0.2 behavior spec + diagrams
-  evidence-and-evolution.md     # evidence C01 spike, C02-C05, C06 findings, C07 risk register
+  specification.md              # C02: baseline v0.1/v0.2 behavior spec + diagrams, v0.3 (CR-08)
+  evidence-and-evolution.md     # evidence C01 spike, C02-C05, C06 findings, C07 risk register,
+                                # C08 baseline tests, C09 release record, C10 operations
 run.py                          # launches the GUI
 run_api.py                      # launches the HTTP API
+check.py                        # C09: build + all tests, the same locally and in CI
+.github/workflows/check.yml     # C09: CI running check.py (Linux + Windows)
 measurements/confirm_latency.py # C04: Confirm time vs. history size, lock errors
 src/parking/                    # service (state changes), domain rules, place catalog,
                                 # persistence, notification stub, tkinter GUI, HTTP API
 tests/                          # unit, service, concurrency, HTTP API and architecture tests
   test_detailed_design.py       # C05: unit/component tests derived from the detailed design
   test_http_api.py              # CP1 walking skeleton end to end over HTTP
+  test_c08_baseline.py          # C08: TC-C08-01/02 against a SQLite file, independent read
+  test_cr08_ev_place.py         # C09: CR-08 EV place, 4 h boundary incl. over HTTP
 ```
 
 ## CP1 walking skeleton
