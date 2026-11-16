@@ -703,8 +703,10 @@ jinak NOT VERIFIED. Stav k 2026-11-02, větev `c07-open-items` (nad
   review jiného člena (C08 rozhodnutí i C09 diff) ani jeho čistý checkout.
   Proto C09 HOLD. Hodnocení LOW (2) platí jen, pokud se review a checkout
   doplní.
-- **R-02:** přeměřeno po přidání `p6` (6 míst, 60 000 řádků): QC-2 1/400 při
-  10 000/místo, nejdelší čekání 2,8 s – v pásmu D4, beze změny. MEDIUM (4).
+- **R-02:** přeměřeno po přidání `p6` (6 míst, 60 000 řádků, jeden běh na
+  `21bbb36`): QC-2 1/400 při 10 000/místo, nejdelší úspěšné potvrzení
+  2,77 s – v rozsahu běhů C04 při 10 000/místo (1–2/400, 1,1–5,6 s).
+  Trigger D4 (víc než 1 000/místo) se netýká, objem se nezměnil. MEDIUM (4).
 - **R-03:** QC-1 na Windows, na adaptéru (`BatteryStatus` 2), p95 41,2 ms;
   trigger nenastal. LOW (2).
 - **R-04:** HTTP přibylo jen ošetření chyb úložiště (503), žádná nová
@@ -813,8 +815,9 @@ R. Gřegořem 2026-11-16. **Peer review rozhodnutí zatím chybí** (viz níže)
 proto implementace postupuje s vědomím, že review ji může vrátit.
 
 **Before / after:** before = `743fb2a`. Kód CR-08 = `1969157`, automatizace
-= `21bbb36`, oprava z C10 = `0398941` (= release candidate, poslední commit
-s kódem). Větev `c08-c10-ev-place`, zatím nepushnutá, bez tagu.
+= `21bbb36`, oprava z C10 = `0398941`, test GUI pro AC-06 a aktualizace
+návrhových pohledů = `e30cefe` (= **release candidate**; pozdější commity
+mění jen dokumentaci). Větev `c08-c10-ev-place`, zatím nepushnutá, bez tagu.
 
 **Dotčená tvrzení:** nové AC-01..AC-06 (BR-06, REQ-01 v0.3). Regresní báze:
 TC-C08-01/02, BR-04 na ostatních místech, BR-02 na EV místě, všech 88
@@ -822,32 +825,57 @@ testů z baseline.
 
 **Změněno:** `domain.py` (`ParkingPlace.max_duration`, `EV_MAX_DURATION`,
 `create_reservation` bere limit místa), `places.py` (`p6` / `EV-01`),
-`gui.py` (jen nápověda), `specification.md` (BR-06, REQ-01 v0.3), nové testy
-`test_cr08_ev_place.py`. **Záměrně beze změny:** schéma DB, stavy a
-přechody, Confirm/Approve/Cancel, HTTP kontrakt, ADR-04. **N/A:** migrace
+`gui.py` (jen nápověda), `specification.md` (BR-06, REQ-01 v0.3), návrhové
+pohledy C1/H2/DD-3 (`max_duration`), nové testy `test_cr08_ev_place.py`.
+
+**Druhá změna ve stejném RC – oprava z C10 (I-05, `0398941`), mimo CR-08:**
+`repository.py` (otevření DB hlásí `StoreBusy` nebo nový `StoreUnavailable`
+místo surové `sqlite3` chyby), `service.py` (export `StoreUnavailable`),
+`http_api.py` (POST i GET odpoví na tyto chyby **503** a zapíší záznam
+WARNING/ERROR; dřív spojení spadlo bez odpovědi), `run_api.py` (log v UTC
+s úrovní), testy `test_c10_operations.py`. HTTP kontrakt se tím **mění** o
+odpověď 503 pro chyby úložiště; pro ostatní odpovědi beze změny. Důvod a
+důkaz: C10 níže.
+
+**Záměrně beze změny:** schéma DB, stavy a přechody, Confirm/Approve/Cancel,
+HTTP odpovědi 201/400/404/422, ADR-04. **N/A:** migrace
 (místa nejsou v DB a sloupec nepřibyl), konfigurace (limit je konstanta jako
 BR-04/BR-05, aplikace nemá konfigurační soubor), worker/import (neexistují).
 
 **Peer review:** *PENDING* – recenzent (jiný člen týmu než autor), datum,
 zpochybněný předpoklad a výsledek. K prověření: hranice 4 h včetně, kontrola
 jen při Create, hláška chyby, omezení rollbacku níže, oprava z C10
-(`0398941`). Bez review nelze vydat READY.
+(`0398941`, nová odpověď 503). Bez review nelze vydat READY.
 
 | Test ID | Nezávislý oracle | Příkaz / data | Expected | Actual | Verdikt | Evidence |
 |---|---|---|---|---|---|---|
 | TC-CR08-01 (AC-01, AC-02, AC-03, AC-06) | Change Card AC, spec BR-06 | `tests/test_cr08_ev_place.py::EvPlaceRule`, `now` = 06:00 | 2 h a přesně 4 h `DRAFT`; 4 h + 1 s a 4 h 1 min zamítnuto s „4 hours“ / „EV-01“; EV-01 v katalogu, 4 h, bez schválení | odpovídá | PASS | `check.py` log níže |
+| TC-CR08-02 (AC-06, GUI) | AC-06 | `EvPlaceInGui`: skutečné okno `App` nad souborem SQLite s rezervací `p6` | combobox míst obsahuje `EV-01`; tabulka ukáže řádek `EV-01`, `DRAFT` | odpovídá (tkinter s displejem, nepřeskočeno) | PASS | `check.py` log |
 | TC-CR08-03 (AC-02, AC-03 přes HTTP) | AC + nezávislé čtení souboru | `EvPlaceOverHttp`, skutečný HTTP server, soubor SQLite | 4 h → 201 `DRAFT` a v DB jeden řádek `p6 DRAFT`; 4 h + 1 s, 4 h 1 min → 422 „4 hours“, v DB dál jeden řádek | odpovídá | PASS | `check.py` log |
 | AC-04 regrese BR-04 | spec BR-04 | `test_ac04_other_places_keep_24_hours` | A-01 24 h `DRAFT`, 25 h zamítnuto; všechna místa kromě p6 mají 24 h | odpovídá | PASS | `check.py` log |
 | AC-05 BR-02 na EV-01 | BR-02 + nezávislé čtení | `EvPlaceOverlap`, soubor SQLite | překryv odmítnut, navazující potvrzena; v DB `CONFIRMED, DRAFT, CONFIRMED` | odpovídá | PASS | `check.py` log |
 | C08 regrese TC-C08-01 | BR-01, BR-02, REQ-03 | `tests/test_c08_baseline.py` | jako v C08 | odpovídá | PASS | `check.py` log |
 | C08 regrese TC-C08-02 | BR-02, REQ-03 | `tests/test_c08_baseline.py` | jako v C08 | odpovídá | PASS | `check.py` log |
-| celá sada | dosavadní tvrzení C02–C07 | `python check.py` | 0 selhání | 102 testů, 0 selhání, 0 přeskočeno | PASS | níže |
-| QC-1 / QC-2 po změně (Impact „měření“) | C04: p95 ≤ 100 ms; D4 | `confirm_latency.py --history 10000 --runs 200`, na adaptéru | QC-1 dál splněno; QC-2 1–2/400 jako v D4 | p95 41,24 ms (60 000 řádků = 6 míst); QC-2 1/400 | PASS | výpis níže |
+| C10 oprava (I-05) | C10 pokus 3a/3b, D4 | `tests/test_c10_operations.py` (4) + `c10_operations.py` běh 2 | zamčeno → `StoreBusy`/503, nedostupné → `StoreUnavailable`/503 + ERROR | odpovídá | PASS | C10 níže |
+| celá sada | dosavadní tvrzení C02–C07 | `python check.py` | 0 selhání | 103 testů, 0 selhání, 0 přeskočeno | PASS | níže |
+| QC-1 / QC-2 po změně (Impact „měření“) | C04: p95 ≤ 100 ms; D4 | `confirm_latency.py --history 10000 --runs 200` na `21bbb36` (kód CR-08), na adaptéru, jeden běh | QC-1 dál splněno; QC-2 v rozsahu C04 | QC-1 p95 41,24 ms (60 000 řádků = 6 míst); QC-2 1/400, nejdelší úspěšné potvrzení 2,77 s | PASS | výpis níže |
 | Python 3.12 (README „3.12+“) | README | – | – | – | NOT RUN | lokálně jen 3.11 a 3.14; pokryje CI matrix |
 
 **Umí nové testy selhat?** Na kódu `743fb2a` se `test_cr08_ev_place.py`
 nenačte (`parking place does not exist` pro `p6`). Mutace (globální limit
 24 h místo limitu místa) → 3 FAIL (4 h + 1 s, 4 h 1 min, HTTP 422).
+
+Výpis měření (2026-11-16, Windows na adaptéru, `BatteryStatus` 2):
+
+```
+python measurements/confirm_latency.py --history 10000 --runs 200
+history/place  rows    solo p50   solo p95   solo max  2-proc p95  2-proc max  lock errors  confirmed
+        10000   60000   38.92 ms   41.24 ms   43.62 ms    43.89 ms  2770.21 ms        1/400  599/600
+```
+
+V C04 při 10 000/místo (5 míst) bylo 1–2/400 chyb a nejdelší úspěšné
+potvrzení 1,1–5,6 s; tento jeden běh je v tom rozsahu. Šestým místem se
+QC-1 zjevně nezhoršil; jeden běh ale nestačí na tvrzení o rozptylu.
 
 **Skutečná integrační hranice:** HTTP server na skutečném socketu →
 `ReservationService` → soubor SQLite; stav čte test vlastním spojením
@@ -862,34 +890,36 @@ CI: `.github/workflows/check.yml` spouští totéž na Ubuntu a Windows
 s Pythonem 3.12 a 3.14 – **PLANNED / NOT RUN**, dokud větev není pushnutá.
 
 ```
-commit:  039894107d511a38792bbf4d2ffe520feabca253
+commit:  e30cefe278ee9ca764e9294f9ba7c87c609eaecf
 python:  3.14.3 (C:\Python314\python.exe)
 sqlite:  3.50.4
 os:      Windows-11-10.0.26100-SP0
 build:   OK
-tests run: 102, failures: 0, errors: 0, skipped: 0
+tests run: 103, failures: 0, errors: 0, skipped: 0
 result:  PASS (exit 0)
 ```
 
 **Čistý checkout (stejný autor, stejný stroj – není nezávislá
-reprodukce):** `git clone` lokálního repozitáře do nového adresáře
-(větev není na GitHubu, README uvádí URL GitHubu), `git checkout 0398941`,
-`git status` čistý, bez `.env` a bez lokálních souborů, `python check.py
---log check.log` → PASS, 102 testů; smoke podle README: `run_api.py
+reprodukce):** `git clone -c core.autocrlf=false` lokálního repozitáře do
+nového adresáře (větev není na GitHubu, README uvádí URL GitHubu),
+`git checkout e30cefe`, bez `.env` a bez lokálních souborů, `python check.py
+--log check.log` → PASS, 103 testů; smoke podle README: `run_api.py
 smoke.db` + POST `p6` 4 h → 201 `DRAFT`, GET → 200, POST `p6` 5 h → 422
 „parking place EV-01 can be reserved for at most 4 hours“, v DB jeden řádek
-`('p6', 'DRAFT')`. Totéž předtím na `21bbb36` (98 testů).
+`('p6', 'DRAFT')`. Totéž předtím na `21bbb36` (98 testů) a `0398941`
+(102 testů).
 
 **Nezávislá reprodukce jiným členem:** *PENDING (NOT RUN)*. Další krok:
-push větve, jiný člen naklonuje `0398941` z GitHubu podle README na svém
-stroji, spustí `check.py` a smoke, zapíše OS/Python, příkazy a výsledek.
+push větve, jiný člen naklonuje `e30cefe` z GitHubu podle README na svém
+stroji, spustí `check.py` a smoke, zapíše OS/Python, příkazy a výsledek a
+porovná tree id níže.
 
 **Identita release candidate:**
 
 | Položka | Hodnota |
 |---|---|
-| zdroj | `039894107d511a38792bbf4d2ffe520feabca253`; tag `c09-rc1` až po review |
-| artefakt | žádný build kromě zdrojů; `git archive --format=tar 0398941` → SHA-256 `b7cd3fb78f2965d5dc557b192040b87e61bc549a0d0241cb8db5e8e504db7ea6` (dvakrát stejný) |
+| zdroj | commit `e30cefe278ee9ca764e9294f9ba7c87c609eaecf`, tree `2a6f62515f791be34f2a41d8994a3f4f27d2ff6b` (identita obsahu, nezávislá na stroji); tag `c09-rc1` až po review |
+| artefakt | žádný build kromě zdrojů; `git -c core.autocrlf=false archive --format=tar e30cefe` → SHA-256 `2a6de003a5d91c2053257bb475858b1e840e61b00e5e4b698513dff509ca1b45`. Bez `-c core.autocrlf=false` vyjde na Windows s `autocrlf=true` jiný hash (převod konců řádků), proto je primární identitou tree id |
 | závislosti | žádné mimo standardní knihovnu (D1), proto žádný lock soubor |
 | runtime | ověřeno Python 3.14.3, SQLite 3.50.4, Windows 11; README tvrdí 3.12+ (neověřeno lokálně) |
 | schéma DB | tabulka `reservation` beze změny od C01, žádná migrace |
@@ -912,7 +942,7 @@ review a nezávislá reprodukce chybí; CI neběželo.
 testy, integrace přes HTTP + SQLite, měření i čistý checkout autorem prošly.
 Chybí ale peer review rozhodnutí C08 i diffu a reprodukce jiným členem; obojí
 je v C09 povinné. Změna na READY, až: (1) review zapsané výše bez
-nevyřešených nálezů, (2) jiný člen zopakuje čistý checkout `0398941` s PASS,
+nevyřešených nálezů, (2) jiný člen zopakuje čistý checkout `e30cefe` s PASS,
 (3) po pushi CI zelené (nebo zapsaný důvod, proč neběží). Zelené testy
 nejsou povolení k nasazení.
 
@@ -1018,3 +1048,11 @@ chybějící adresář → `StoreUnavailable`, HTTP POST/GET → 503 + záznam E
   v logu a musí se nahradit skutečnou notifikací nebo pseudonymem. GUI
   (`run.py`) loguje dál v místním čase; v C10 se netestovalo. Confirm přes
   HTTP neexistuje, pokusy 1–2 proto šly přes službu v samostatném procesu.
+  Ošetřené je jen *otevření* DB: čtení mimo `transaction()` (`get`,
+  `for_place`, `all`, např. GUI `refresh()` nebo GET po otevření) by při
+  zámku, který vznikne mezi otevřením a čtením, dál skončilo surovou
+  `sqlite3` chybou; nevyzkoušeno.
+- *Doplňující pokus 3b s delším zámkem* (`e30cefe`, 12:04 UTC): zámek
+  držený 20 s → 503 po 7,50 s (čekání je omezené, nekopíruje délku zámku);
+  zámek 2 s → POST počká 2,1 s a uspěje 201. Mez je tedy ~7,5 s, ne 5 s
+  z `LOCK_TIMEOUT`; příčina neověřená.
