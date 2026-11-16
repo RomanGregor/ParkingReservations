@@ -696,3 +696,65 @@ jinak NOT VERIFIED. Stav k 2026-11-02, větev `c07-open-items` (nad
 - I-02 = C06 F1 (P2) – uzavřeno `ffb9c70` + přeměření v C04 (`da3d858`).
 - I-03 drobné nekonzistence dokumentace (viz C06 „Drobnosti z formuláře“) – opraveno v `da3d858`; zkontrolováno 2026-11-02 (commit v C04, 80 testů, PowerShell v README, „Proč tato úroveň“, poznámka k L1).
 - I-04 měřicí skript se mohl zablokovat (připomínka z review C07) – opraveno `322bc58`.
+
+## C08 — Řízená změna: baseline a testy před změnou
+
+Change Card CR-08 (EV nabíjecí místo, max 4 h), Impact Matrix, varianty a
+rozhodnutí: `docs/intent-and-change.md`, sekce „C08 / CR-08“.
+
+### Baseline (krok 0)
+
+| Položka | Hodnota |
+|---|---|
+| commit | `743fb2a` (`main`, merge `c07-open-items`); práce na větvi `c08-c10-ev-place` |
+| specifikace | `docs/specification.md` v0.2: BR-01..BR-05, REQ-01..REQ-08; BR-02 = žádné dvě překrývající se `CONFIRMED` téhož místa |
+| architektura | ADR-04 (stavové změny jen v `ReservationService`, jedna transakce), D3 (UTC ISO-8601), D4 (zámek, bez indexu) |
+| schéma DB | tabulka `reservation` z C01 (`repository.py`, `_SCHEMA`), bez čísla verze a bez migrací; místa nejsou v DB, ale v kódu (`places.py`, `p1`..`p5`) |
+| runtime | Windows 11 IoT Enterprise LTSC 10.0.26100, Python 3.14.3, SQLite 3.50.4; jen standardní knihovna (D1), žádné závislosti k instalaci |
+| testovací data | každý test si vytvoří vlastní soubor SQLite v dočasném adresáři; žádná sdílená DB, žádná hesla ani tajné proměnné |
+| příkaz | `$env:PYTHONPATH = "src"; python -m unittest discover -s tests` → na `743fb2a`: `Ran 88 tests — OK` (2026-11-16) |
+
+### TC-C08-01 — navazující rezervace lze potvrdit
+
+- **Test basis:** BR-01 (`[start, end)`, navazující se nepřekrývají), BR-02,
+  REQ-03 (spec v0.2, příklad „`DRAFT` 10:00–11:00, existuje `CONFIRMED`
+  08:00–10:00 → `CONFIRMED`“). Riziko: N/A.
+- **Baseline:** `743fb2a` + testovací soubor `tests/test_c08_baseline.py`
+  (kód aplikace beze změny).
+- **Rozhraní:** skutečný `ReservationService` nad souborem SQLite (stejná
+  cesta jako tlačítko Confirm v GUI). Uložený stav čte test **vlastním novým
+  spojením `sqlite3`**, ne přes službu ani repozitář.
+- **Předpoklady a data:** pevné hodiny `now` = 2026-12-01 06:00 UTC; místo
+  `p1` (A-01, bez schválení); B1 `CONFIRMED` [10:00, 11:00); B2 `DRAFT`
+  [11:00, 12:00); uživatelé `tc-driver-1`, `tc-driver-2` (žádné osobní údaje).
+- **Příkaz:** `$env:PYTHONPATH = "src"; python -m unittest tests.test_c08_baseline -v`
+
+| # | Akce | Expected (před během) | Actual (po běhu) |
+|---|---|---|---|
+| 1 | nový soubor DB, vytvořit a potvrdit B1, vytvořit B2 | jen B1 `CONFIRMED`, B2 `DRAFT` | *doplnit po běhu* |
+| 2 | nezávisle přečíst intervaly a stavy | B1 končí 11:00, B2 začíná 11:00; žádná jiná `CONFIRMED` | *doplnit po běhu* |
+| 3 | `service.confirm(B2)` | uspěje, vrátí `CONFIRMED` | *doplnit po běhu* |
+| 4 | nové spojení, přečíst uložený stav | B1 i B2 `CONFIRMED`, bez překryvu | *doplnit po běhu* |
+| 5 | celé znovu z nového souboru | stejný výsledek | *doplnit po běhu* |
+
+### TC-C08-02 — překrývající se potvrzení je odmítnuto, nic se nezmění
+
+- **Test basis:** BR-02, REQ-03 (chybový výsledek „kolize s `CONFIRMED`
+  rezervací → zůstává `DRAFT`“). Riziko: N/A (souběh pokrývá zvlášť REQ-04
+  v `test_concurrency.py`).
+- **Baseline, rozhraní, hodiny, příkaz:** jako TC-C08-01.
+- **Data:** B1 `CONFIRMED` [10:00, 11:00); B2 `DRAFT` [10:30, 11:30) na `p1`.
+- **Kontrakt odmítnutí:** služba vyhodí `RuleViolation`, hláška jmenuje
+  kolidující rezervaci (GUI ji ukáže jako chybu). HTTP pro Confirm zatím
+  neexistuje.
+
+| # | Akce | Expected (před během) | Actual (po běhu) |
+|---|---|---|---|
+| 1 | nový soubor DB, B1 `CONFIRMED`, B2 `DRAFT` | jen B1 `CONFIRMED` | *doplnit po běhu* |
+| 2 | nezávisle přečíst výchozí stav | intervaly se překrývají, `CONFIRMED` je jen B1 | *doplnit po běhu* |
+| 3 | `service.confirm(B2)` | `RuleViolation`, hláška obsahuje id B1 | *doplnit po běhu* |
+| 4 | nové spojení, přečíst uložený stav | totožný s krokem 2: B1 `CONFIRMED`, B2 `DRAFT` | *doplnit po běhu* |
+| 5 | celé znovu z nového souboru | stejný výsledek | *doplnit po běhu* |
+
+**Co testy nepokrývají:** souběžné Confirm (REQ-04, zvlášť v
+`test_concurrency.py`), Approve na místě se schválením, GUI samotné.
